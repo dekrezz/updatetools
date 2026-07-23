@@ -5,10 +5,18 @@
 #   updatetools                 # animated dashboard (default, on a terminal)
 #   updatetools --plain         # plain scrolling text output (no dashboard)
 #   updatetools --no-greedy     # don't force-upgrade casks that self-manage
+#   updatetools --no-close      # never close running apps (stage all cask upgrades)
+#   updatetools --no-report     # don't write the HTML report to the Desktop
+#   updatetools --no-open       # write the report but don't open it in a browser
 #
 # Env toggles:
 #   GREEDY=0                    # same as --no-greedy
 #   PLAIN=1                     # same as --plain
+#   CLOSE_APPS=0                # same as --no-close
+#   MAKE_REPORT=0               # same as --no-report
+#   OPEN_REPORT=0               # same as --no-open
+#   UPDATETOOLS_CLOSE="a b"     # force-close these cask apps to upgrade them now
+#   UPDATETOOLS_PROTECT="a b"   # never close these cask apps
 set -u
 
 # ---------------------------------------------------------------------------
@@ -16,18 +24,25 @@ set -u
 # ---------------------------------------------------------------------------
 GREEDY="${GREEDY:-1}"
 PLAIN="${PLAIN:-0}"
+CLOSE_APPS="${CLOSE_APPS:-1}"
+MAKE_REPORT="${MAKE_REPORT:-1}"
+OPEN_REPORT="${OPEN_REPORT:-1}"
 
 for arg in "$@"; do
   case "$arg" in
     --plain|--no-pretty|--no-tui) PLAIN=1 ;;
     --pretty|--tui)               PLAIN=0 ;;
     --no-greedy)                  GREEDY=0 ;;
+    --no-close)                   CLOSE_APPS=0 ;;
+    --no-report)                  MAKE_REPORT=0 ;;
+    --no-open)                    OPEN_REPORT=0 ;;
     -h|--help)
-      sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "Unknown option: $arg (use --help)"; exit 2 ;;
   esac
 done
+export CLOSE_APPS MAKE_REPORT OPEN_REPORT
 
 # Default to the animated dashboard on an interactive terminal. Drop to plain
 # text when --plain is given OR when stdout isn't a TTY (pipes, cron, CI).
@@ -45,7 +60,43 @@ if [ "$PLAIN" != "1" ] && [ -t 1 ]; then
   # else: TUI missing — fall through to plain output.
 fi
 
+# Single-instance lock (mirrors updatetools-tui). Two concurrent runs collide on
+# Homebrew's download lock; mkdir is atomic, so refuse a second run and reclaim a
+# stale lock whose owner is gone. Reached only on the plain path — the TUI takes
+# its own lock after handing off non-TTY callers here.
+LOCK_BASE="${TMPDIR:-/tmp}/updatetools.lock"
+if ! mkdir "$LOCK_BASE" 2>/dev/null; then
+  oldpid="$(cat "$LOCK_BASE/pid" 2>/dev/null)"
+  if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+    echo "updatetools is already running (PID $oldpid) — refusing to start a second run."
+    echo "(Concurrent runs collide on Homebrew's download lock.)"
+    exit 1
+  fi
+  rm -rf "$LOCK_BASE" 2>/dev/null
+  mkdir "$LOCK_BASE" 2>/dev/null || { echo "Could not acquire updatetools lock ($LOCK_BASE)."; exit 1; }
+fi
+trap 'rm -rf "$LOCK_BASE" 2>/dev/null' EXIT
+echo $$ > "$LOCK_BASE/pid"
+
 if [ "$GREEDY" = "1" ]; then GREEDY_FLAG="--greedy"; else GREEDY_FLAG=""; fi
+
+# ---------------------------------------------------------------------------
+# Shared helpers: smart cask close/upgrade classification + Desktop HTML report.
+# The library lives next to this script; if it's missing we warn loudly and fall
+# back to the old blanket staging so the core updates still run.
+# ---------------------------------------------------------------------------
+LIB="$(dirname "$0")/updatetools-lib.sh"
+if [ -r "$LIB" ]; then
+  . "$LIB"
+else
+  echo "WARNING: $LIB not found — cask close-classification and the HTML report are disabled." >&2
+  ut_upgrade_casks_smart() {
+    local list; list="$(brew outdated --cask ${1:-} --quiet 2>/dev/null)"
+    [ -n "$list" ] && brew upgrade --cask --no-quit $list || true
+  }
+  ut_report_begin()    { :; }
+  ut_generate_report() { :; }
+fi
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -76,15 +127,27 @@ if have brew; then
   section "Homebrew update"
   brew update || true
 
+  # Snapshot "before" versions now — after the index refresh, before any upgrade —
+  # so the Desktop report can show accurate old -> new transitions.
+  ut_report_begin
+
   section "Homebrew outdated (report)"
   brew outdated || true
   brew outdated --cask --greedy || true
 
   section "Homebrew upgrade formulae"
-  brew upgrade || true
+  # Keep this step formulae-only: brew upgrade otherwise also touches casks with
+  # auto_updates true, which can include ones needing an interactive sudo prompt.
+  HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1 brew upgrade || true
 
   section "Homebrew upgrade casks"
-  brew upgrade --cask $GREEDY_FLAG || true
+  # Per outdated cask, classify_cask() (in updatetools-lib.sh) decides whether the
+  # running app is safe to close: apps that aren't running are upgraded in place;
+  # the terminal running this script, apps with unsaved work, and risky categories
+  # (browsers, IDEs, VMs, meetings, password managers, backups) are staged with
+  # --no-quit; only provably-clean apps (or ones in UPDATETOOLS_CLOSE) are quit
+  # gracefully, upgraded and relaunched. Nothing is ever force-killed.
+  ut_upgrade_casks_smart "$GREEDY_FLAG"
 
   section "Homebrew postinstall fixes"
   if brew list gnupg >/dev/null 2>&1; then
@@ -98,6 +161,10 @@ else
   section "Homebrew"
   note "Homebrew not found; skipping."
 fi
+
+# Fallback "before" snapshot: if Homebrew is absent the block above was skipped,
+# so capture CLI versions here instead (idempotent — a no-op if already taken).
+ut_report_begin
 
 # ---------------------------------------------------------------------------
 # Node / npm / npx
@@ -206,6 +273,40 @@ if have vercel; then
 else note "vercel not found; skipping."; fi
 
 # ---------------------------------------------------------------------------
+# Claude Code
+# ---------------------------------------------------------------------------
+section "Claude Code"
+if have claude; then
+  note "claude: $(claude --version 2>/dev/null)"
+  claude update || true
+else note "claude not found; skipping."; fi
+
+# ---------------------------------------------------------------------------
+# Codex CLI (install-source aware)
+# ---------------------------------------------------------------------------
+section "Codex CLI"
+if have codex; then
+  note "codex: $(codex --version 2>/dev/null)"
+  if have brew && brew list --cask codex >/dev/null 2>&1; then
+    brew upgrade --cask codex || true
+  elif have npm && npm ls -g @openai/codex >/dev/null 2>&1; then
+    npm install -g @openai/codex@latest || true
+  else
+    # Standalone-installer build — self-updates when the release supports it.
+    codex update || true
+  fi
+else note "codex not found; skipping."; fi
+
+# ---------------------------------------------------------------------------
+# Antigravity CLI (agy) — self-updating, independent of the antigravity app cask
+# ---------------------------------------------------------------------------
+section "Antigravity CLI (agy)"
+if have agy; then
+  note "agy: $(agy --version 2>/dev/null)"
+  agy update || true
+else note "agy not found; skipping."; fi
+
+# ---------------------------------------------------------------------------
 # gh CLI + extensions
 # ---------------------------------------------------------------------------
 section "GitHub CLI extensions"
@@ -218,7 +319,14 @@ else note "gh not found; skipping."; fi
 # ---------------------------------------------------------------------------
 section "VS Code extensions"
 if have code; then
+  # Locally-developed extensions (your own publisher) aren't on the Marketplace,
+  # so `code --install-extension` can't fetch them and errors. Skip them.
+  # Override with VSCODE_SKIP_EXTS (empty disables skipping).
+  VSCODE_SKIP_EXTS="${VSCODE_SKIP_EXTS-^mythler\.}"
   code --list-extensions 2>/dev/null | sed '/^[[:space:]]*$/d' | while IFS= read -r ext; do
+    if [ -n "$VSCODE_SKIP_EXTS" ] && printf '%s\n' "$ext" | grep -qE "$VSCODE_SKIP_EXTS"; then
+      note "skip (local/private, not on marketplace): $ext"; continue
+    fi
     code --install-extension "$ext" --force || true
   done
 else note "code command not found; skipping."; fi
@@ -228,12 +336,25 @@ else note "code command not found; skipping."; fi
 # ---------------------------------------------------------------------------
 section "Final versions"
 for v in "brew --version" "node -v" "npm -v" "npx -v" "pnpm -v" "python3 --version" \
-         "uv --version" "go version" "cargo --version" "gh --version" "docker --version"; do
+         "uv --version" "go version" "cargo --version" "claude --version" "codex --version" \
+         "agy --version" "gh --version" "docker --version"; do
   out=$(eval "$v" 2>/dev/null | head -1)
   [ -n "$out" ] && printf "%-10s %s\n" "${v%% *}:" "$out"
 done
 
 section "Homebrew doctor"
 have brew && brew doctor || true
+
+# ---------------------------------------------------------------------------
+# Update report — old -> new versions + changelog links, written to the Desktop.
+# ---------------------------------------------------------------------------
+section "Update report"
+report_path="$(ut_generate_report)"
+if [ -n "${report_path:-}" ]; then
+  note "HTML report: $report_path"
+  if [ -f "$report_path" ] && [ -t 1 ] && [ "$OPEN_REPORT" = "1" ]; then
+    open "$report_path" 2>/dev/null || true
+  fi
+fi
 
 section "Done"

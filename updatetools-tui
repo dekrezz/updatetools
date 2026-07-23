@@ -10,6 +10,9 @@
 # Usage:
 #   updatetools-tui            # update all installed software
 #   updatetools-tui --no-greedy
+#   updatetools-tui --no-close  # never close running apps (stage all cask upgrades)
+#   updatetools-tui --no-report # don't write the HTML report to the Desktop
+#   updatetools-tui --no-open   # write the report but don't open it in a browser
 #   (press q to leave the summary screen)
 set -u
 
@@ -17,6 +20,9 @@ set -u
 # Config / args
 # ---------------------------------------------------------------------------
 GREEDY="${GREEDY:-1}"
+CLOSE_APPS="${CLOSE_APPS:-1}"
+MAKE_REPORT="${MAKE_REPORT:-1}"
+OPEN_REPORT="${OPEN_REPORT:-1}"
 # Watchdog: kill a step that emits no output for this many seconds (it's almost
 # certainly wedged). 0 disables. PROMPT_TIMEOUT bounds how long a sudo/ssh prompt
 # waits for input before the step is aborted, so an unattended run never freezes.
@@ -25,16 +31,20 @@ PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-300}"
 for arg in "$@"; do
   case "$arg" in
     --no-greedy)   GREEDY=0 ;;
+    --no-close)    CLOSE_APPS=0 ;;
+    --no-report)   MAKE_REPORT=0 ;;
+    --no-open)     OPEN_REPORT=0 ;;
     --plain|--no-pretty|--no-tui)
       # Caller explicitly wants plain output — hand off to updatetools --plain.
       plain="$(dirname "$0")/updatetools"
       rest=(); for a in "$@"; do case "$a" in --plain|--no-pretty|--no-tui) ;; *) rest+=("$a") ;; esac; done
       exec "$plain" --plain ${rest[@]+"${rest[@]}"} ;;
-    -h|--help)     sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)     sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $arg"; exit 2 ;;
   esac
 done
 [ "$GREEDY" = "1" ] && GREEDY_FLAG="--greedy" || GREEDY_FLAG=""
+export CLOSE_APPS MAKE_REPORT OPEN_REPORT
 
 # ---------------------------------------------------------------------------
 # Homebrew env
@@ -43,6 +53,22 @@ if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)"
 elif [ -x /usr/local/bin/brew ]; then eval "$(/usr/local/bin/brew shellenv)"; fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Shared helpers: smart cask close/upgrade classification + Desktop HTML report.
+# Must live next to this script; warn loudly and fall back to blanket staging if
+# it's missing, so the dashboard still runs.
+LIB="$(dirname "$0")/updatetools-lib.sh"
+if [ -r "$LIB" ]; then
+  . "$LIB"
+else
+  echo "WARNING: $LIB not found — cask close-classification and the HTML report are disabled." >&2
+  ut_upgrade_casks_smart() {
+    local list; list="$(brew outdated --cask ${1:-} --quiet 2>/dev/null)"
+    [ -n "$list" ] && brew upgrade --cask --no-quit $list || true
+  }
+  ut_report_begin()  { :; }
+  ut_report_finish() { :; }
+fi
 
 # Recursively terminate a process and all of its descendants. A background step
 # spawns children (brew → sudo → launchctl, …); killing only the top pid would
@@ -81,6 +107,28 @@ pnpm_update_global() {
   pnpm update -g --latest || true
 }
 
+# Cask upgrades now go through ut_upgrade_casks_smart() in updatetools-lib.sh,
+# which classifies each running app (close vs protect) instead of blanket
+# --no-quit staging. The interactive-sudo skip list (BREW_CASK_SKIP, default
+# "stats aldente") is still honoured there.
+
+# Locally-developed VS Code extensions (your own publisher) aren't on the
+# Marketplace, so `code --install-extension` can't fetch them and errors every
+# run. Skip them. Extended-regex matched against publisher.name; override with
+# VSCODE_SKIP_EXTS (empty string disables skipping).
+VSCODE_SKIP_EXTS="${VSCODE_SKIP_EXTS-^mythler\.}"
+vscode_update_exts() {
+  local e
+  code --list-extensions 2>/dev/null | sed '/^[[:space:]]*$/d' | while IFS= read -r e; do
+    if [ -n "$VSCODE_SKIP_EXTS" ] && printf '%s\n' "$e" | grep -qE "$VSCODE_SKIP_EXTS"; then
+      echo "skip (local/private, not on marketplace): $e"
+      continue
+    fi
+    code --install-extension "$e" --force || true
+  done
+  return 0
+}
+
 LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
 : > "$LOG"
 
@@ -91,8 +139,9 @@ LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
 # ---------------------------------------------------------------------------
 STEPS=(
   "Homebrew · update index¦have brew¦brew update"
-  "Homebrew · upgrade formulae¦have brew¦brew upgrade"
-  "Homebrew · upgrade casks¦have brew¦brew upgrade --cask $GREEDY_FLAG"
+  "Report · scan versions¦true¦ut_report_begin"
+  "Homebrew · upgrade formulae¦have brew¦HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1 brew upgrade"
+  "Homebrew · upgrade casks¦have brew¦ut_upgrade_casks_smart \"\$GREEDY_FLAG\""
   "Homebrew · autoremove + cleanup¦have brew¦brew autoremove; brew cleanup -s"
   "npm · global packages¦have npm¦npm_update_global"
   "pnpm · global packages¦have pnpm¦pnpm_update_global"
@@ -100,8 +149,12 @@ STEPS=(
   "cargo · update binaries¦have cargo¦{ have cargo-install-update||cargo install cargo-update; }; cargo install-update -a"
   "Supabase CLI¦have supabase¦if have brew && brew list supabase >/dev/null 2>&1; then brew upgrade supabase; elif have npm; then npm install -g supabase@latest; fi"
   "Vercel CLI¦have vercel¦if have brew && brew list vercel-cli >/dev/null 2>&1; then brew upgrade vercel-cli; elif have npm && npm list -g vercel >/dev/null 2>&1; then npm install -g vercel@latest; else echo 'vercel present but no known update source matched'; fi"
+  "Claude Code · self-update¦have claude¦claude update"
+  "Codex CLI · update¦have codex¦if have brew && brew list --cask codex >/dev/null 2>&1; then brew upgrade --cask codex; elif have npm && npm ls -g @openai/codex >/dev/null 2>&1; then npm install -g @openai/codex@latest; else codex update; fi"
+  "Antigravity · agy update¦have agy¦agy update"
   "gh · extensions¦have gh¦gh extension upgrade --all"
-  "VS Code · extensions¦have code¦code --list-extensions|sed '/^[[:space:]]*\$/d'|while IFS= read -r e; do code --install-extension \"\$e\" --force; done"
+  "VS Code · extensions¦have code¦vscode_update_exts"
+  "Report · save to Desktop¦true¦ut_report_finish"
 )
 
 TOTAL=${#STEPS[@]}
@@ -138,8 +191,8 @@ for ((_i=0;_i<BAR_W;_i++)); do
   BAR_COL[_i]=$'\033[38;5;'"${RAMP[_ri]}"'m'
 done
 
-SUDO_KEEPER=""; WRAP_DIR=""; PROMPT_REQ=""; PROMPT_REP=""
-cleanup() { [ -n "$SUDO_KEEPER" ] && kill "$SUDO_KEEPER" 2>/dev/null; [ -n "$WRAP_DIR" ] && rm -rf "$WRAP_DIR" 2>/dev/null; tput rmcup 2>/dev/null; tput cnorm 2>/dev/null; }
+SUDO_KEEPER=""; WRAP_DIR=""; PROMPT_REQ=""; PROMPT_REP=""; LOCKDIR=""
+cleanup() { [ -n "$SUDO_KEEPER" ] && kill "$SUDO_KEEPER" 2>/dev/null; [ -n "$WRAP_DIR" ] && rm -rf "$WRAP_DIR" 2>/dev/null; [ -n "$LOCKDIR" ] && rm -rf "$LOCKDIR" 2>/dev/null; [ -n "${UT_LASTREPORT:-}" ] && rm -f "$UT_LASTREPORT" 2>/dev/null; [ -n "${UT_REPORT_DIR:-}" ] && rm -rf "$UT_REPORT_DIR" 2>/dev/null; tput rmcup 2>/dev/null; tput cnorm 2>/dev/null; }
 trap 'cleanup; echo; echo "Interrupted. Full log: '"$LOG"'"; exit 130' INT TERM
 
 fmt_time() { printf '%02d:%02d' $(( $1/60 )) $(( $1%60 )); }
@@ -183,6 +236,15 @@ draw_box() {
 
 # Build the banner once — it never changes, so don't recompute it every frame.
 BANNER="$(draw_box "⟳  updatetools" "keeping your Mac fresh")"
+
+# A mid-run password prompt, rendered as the dashboard footer so it appears IN
+# the dashboard (where the live tail sits) instead of tearing the alternate
+# screen down. Same rounded box as the initial sudo prompt. No trailing newline
+# on the prompt line so the (silent) cursor sits just under it.
+prompt_footer() {
+  local ptext="${1:-Password:}"
+  printf '\n%s\n\n   %s%s%s' "$(draw_box "password required")" "$C_B$C_YEL" "$ptext" "$C_RST"
+}
 
 # Prime sudo before entering the alternate screen. Some casks (e.g. Stats)
 # register privileged launchctl helpers that brew removes via sudo; without a
@@ -265,7 +327,27 @@ render() {
 if ! [ -t 1 ]; then
   echo "Not a TTY — falling back to plain updatetools."
   # Pass --plain so updatetools doesn't try to re-launch this dashboard (exec loop).
+  # Hand off BEFORE taking the lock so the plain path owns it (avoids double-lock).
   exec "$(dirname "$0")/updatetools" --plain "$@"
+fi
+
+# Single-instance lock. Two concurrent runs collide on Homebrew's download lock:
+# one grabs the .incomplete bottle, the other dies "A `brew upgrade` process has
+# already locked ...". Refuse a second run; reclaim a stale lock whose owner is
+# gone. mkdir is atomic, so this is race-free without needing flock (absent on macOS).
+LOCK_BASE="${TMPDIR:-/tmp}/updatetools.lock"
+if mkdir "$LOCK_BASE" 2>/dev/null; then
+  LOCKDIR="$LOCK_BASE"; echo $$ > "$LOCKDIR/pid"
+else
+  oldpid="$(cat "$LOCK_BASE/pid" 2>/dev/null)"
+  if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+    echo "updatetools is already running (PID $oldpid) — refusing to start a second run."
+    echo "(Concurrent runs collide on Homebrew's download lock.)"
+    exit 1
+  fi
+  rm -rf "$LOCK_BASE" 2>/dev/null
+  if mkdir "$LOCK_BASE" 2>/dev/null; then LOCKDIR="$LOCK_BASE"; echo $$ > "$LOCKDIR/pid"
+  else echo "Could not acquire updatetools lock ($LOCK_BASE)."; exit 1; fi
 fi
 
 # Create an askpass helper so SSH, Git, and sudo -A prompts from background
@@ -337,24 +419,27 @@ for ((i=0;i<TOTAL;i++)); do
   while kill -0 "$pid" 2>/dev/null; do
     if [ -f "$PROMPT_REQ" ]; then
       prompt=$(cat "$PROMPT_REQ"); rm -f "$PROMPT_REQ"
-      tput rmcup 2>/dev/null; tput cnorm 2>/dev/null
-      printf '\n%s\n\n' "$(draw_box "password required")"
-      printf '   %s' "$prompt"
+      # Prompt IN the dashboard — pin the password box as the footer (where the
+      # live tail renders) instead of dropping the alternate screen. Reads
+      # silently from the tty, exactly like the initial `sudo -v` prompt.
+      FOOTER="$(prompt_footer "$prompt")"
+      render "$i"
+      tput cnorm 2>/dev/null            # show cursor while typing
       read_args=(-rs)
       [ "${PROMPT_TIMEOUT:-0}" -gt 0 ] 2>/dev/null && read_args+=(-t "$PROMPT_TIMEOUT")
       if IFS= read "${read_args[@]}" reply </dev/tty; then
-        printf '\n\n'
         printf '%s\n' "$reply" > "$PROMPT_REP"
-        tput smcup 2>/dev/null; tput civis 2>/dev/null
+        tput civis 2>/dev/null
+        FOOTER=""
         last_change=$SECONDS   # don't penalise time spent waiting on the user
       else
         # No input within PROMPT_TIMEOUT — abort the step cleanly so an
         # unattended run keeps going instead of blocking forever on the prompt.
-        printf '\n\n'
         kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
         echo "######## no password entered within ${PROMPT_TIMEOUT}s — step aborted ########" >> "$LOG"
+        tput civis 2>/dev/null
+        FOOTER=""
         stalled=1
-        tput smcup 2>/dev/null; tput civis 2>/dev/null
         break
       fi
     fi
@@ -406,6 +491,13 @@ if [ "$fail_n" -gt 0 ]; then
     [ "${STATUS[i]}" = fail ] && FOOTER+="     ${C_RED}✗${C_RST} ${STEPS[i]%%¦*}"$'\n'
   done
 fi
+# Report path, recorded by the "save to Desktop" step (in a subshell) via a file
+# keyed on $$ — read it back here so the summary can show where it landed.
+REPORT_PATH=""
+if [ "${MAKE_REPORT:-1}" = "1" ] && [ -r "${UT_LASTREPORT:-/nonexistent}" ]; then
+  REPORT_PATH="$(cat "$UT_LASTREPORT" 2>/dev/null)"
+fi
+[ -n "$REPORT_PATH" ] && FOOTER+=$'\n'"   ${C_FNT}Report:   ${REPORT_PATH}${C_RST}"
 FOOTER+=$'\n'"   ${C_FNT}Full log: ${LOG}${C_RST}"
 FOOTER+=$'\n\n'"   ${C_DIM}press ${C_RST}${C_YEL}q${C_RST}${C_DIM} to quit${C_RST}"
 
@@ -435,4 +527,5 @@ if [ "$fail_n" -gt 0 ]; then
   done
 fi
 echo
+[ -n "${REPORT_PATH:-}" ] && echo "Report:   $REPORT_PATH"
 echo "Full log: $LOG"

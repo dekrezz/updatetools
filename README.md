@@ -38,7 +38,7 @@ Covered today:
 | Ruby / PHP | system-`gem` aware, `composer` self + global |
 | Version managers | `mise`, `asdf`, `pyenv`, `rbenv`, `nodenv`, `fnm`, `volta`, `tfenv` |
 | Cloud / k8s | `gcloud`, `az`, `aws`, `helm`, `kubectl krew`, `flutter`, `dotnet` |
-| CLIs | Codex (custom npm prefix aware), Supabase, Vercel, `gh` extensions |
+| CLIs | Codex (custom npm prefix aware), Claude Code (`claude update`), Supabase, Vercel, `gh` extensions |
 | Editor / docs | VS Code extensions, `tldr` cache |
 | App Store / OS | `mas`, macOS software updates (opt-in) |
 
@@ -53,13 +53,15 @@ chmod +x updatetools updatetools-tui
 
 # put them on your PATH (example)
 mkdir -p ~/.local/bin
-cp updatetools updatetools-tui ~/.local/bin/
+cp updatetools updatetools-tui updatetools-lib.sh ~/.local/bin/
 # make sure ~/.local/bin is on your PATH in ~/.zshrc:
 #   export PATH="$HOME/.local/bin:$PATH"
 ```
 
-> `updatetools-tui` must live next to `updatetools` (the `--pretty` flag execs it
-> by relative path).
+> All three files must live in the same directory: `updatetools-tui` is exec'd by
+> `updatetools` by relative path, and both `source` the shared `updatetools-lib.sh`
+> (which holds the app-close logic and the report generator). If the library is
+> missing, both warn and fall back to the old blanket cask staging.
 
 ## Usage
 
@@ -84,6 +86,9 @@ without any flag.
 | `--pretty`, `--tui` | Force the dashboard (default; useful only to override `PLAIN=1`). |
 | `--macos`, `--all` | Install macOS **and** Mac App Store updates. Off by default. |
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
+| `--no-close` | Never close running apps — stage every cask upgrade with `--no-quit`. |
+| `--no-report` | Don't write the HTML report to the Desktop. |
+| `--no-open` | Write the report but don't open it in a browser. |
 
 ### Environment toggles
 
@@ -92,6 +97,59 @@ without any flag.
 | `PLAIN=1` | `--plain` |
 | `MACOS_UPDATES=1` | `--macos` |
 | `GREEDY=0` | `--no-greedy` |
+| `CLOSE_APPS=0` | `--no-close` |
+| `MAKE_REPORT=0` | `--no-report` |
+| `OPEN_REPORT=0` | `--no-open` |
+| `UPDATETOOLS_CLOSE="a b"` | Force-close these cask apps to upgrade them now (space/comma list of tokens). |
+| `UPDATETOOLS_PROTECT="a b"` | Never close these cask apps. |
+| `BREW_CASK_SKIP="a b"` | Casks needing an interactive sudo password — kept out of the run and reported for manual upgrade (default `stats aldente`). |
+
+## Deciding which apps to close
+
+Casks are the tricky part: `brew upgrade --cask` normally **quits** a running app
+to swap its bundle (and never relaunches it), while `--no-quit` leaves the app
+running the old version until its next launch. Instead of picking one blanket
+behaviour, `updatetools` classifies every outdated cask that maps to an app and
+acts per verdict:
+
+| Verdict | When | Action |
+|---------|------|--------|
+| **upgrade** | app installed but **not running** | upgrade in place — nobody's using it |
+| **close** | app running **and provably safe to quit** | graceful quit → upgrade → relaunch |
+| **protect** | app running but unsafe to close | stage with `--no-quit`; applies on next launch |
+| **skip (manual)** | needs an interactive sudo password (`BREW_CASK_SKIP`) | reported, not touched |
+
+An app is **protected** (never closed) when it is any of:
+
+- the **terminal running this script** (closing it would kill the run) — resolved
+  by walking the process tree to the hosting GUI app;
+- reporting **unsaved changes / open documents** (best-effort AppleScript probe —
+  anything not provably clean is treated as unsaved, so it's protected);
+- in a **risky category**: browsers, editors/IDEs, VMs & containers, meeting/
+  recording apps, password managers, backup tools;
+- listed in **`UPDATETOOLS_PROTECT`**.
+
+Because the unsaved-changes probe fails safe, **`close` is deliberately rare** —
+in practice it only fires for scriptable apps with a clean document model, or for
+apps you explicitly force with **`UPDATETOOLS_CLOSE`**. Nothing is ever
+force-killed: if a graceful quit doesn't complete (e.g. a save dialog appears),
+the cask falls back to staging. Pass `--no-close` to disable closing entirely.
+
+## The Desktop report
+
+After every run, `updatetools` writes a self-contained HTML report to
+`~/Desktop/updatetools-report-<timestamp>.html` and (on a terminal) opens it. It
+lists each tool that actually changed version this run as a card:
+
+```
+Vercel CLI      39.0.0  →  39.1.2      View changelog ↗
+Claude Code      1.2.3  →  1.3.0       View changelog ↗
+```
+
+Versions come from a snapshot taken right after `brew update` (so `old → new` is
+accurate) diffed against the post-run state; changelog links are a curated,
+manually-maintained map (in `updatetools-lib.sh`). Disable with `--no-report`, or
+keep it but don't auto-open with `--no-open`.
 
 ## Why macOS updates are opt-in
 
