@@ -2,23 +2,22 @@
 
 One command to update **everything updatable** on your Mac — Homebrew, language
 package managers, global CLIs, editor extensions, and (optionally) macOS itself —
-plus an animated full-screen dashboard to watch while it runs.
+plus an animated full-screen dashboard to watch while it runs. It's a **single
+script** with no companion files.
 
 ```
-┌────────────────────────────────────────────┐
-│                                            │
-│   updatetools  ·  keeping your Mac fresh   │
-│                                            │
-└────────────────────────────────────────────┘
+  U P D A T E T O O L S   keeping your Mac fresh                      ⏱ 03:41
+  ────────────────────────────────────────────────────────────────────────────
 
-  [██████████░░░░░░░░░░░░░░░░░░]  11/31   35%     ⏱  01:24
+  ██████────────────────────  23%  4/17    ✓ 3   · 1   ✗ 0
 
-   ✓ Homebrew · update index
-   ✓ Homebrew · upgrade formulae
-   ⠹ Homebrew · upgrade casks
-   ○ npm · global packages
-   – deno · upgrade
-   ↳ ==> Upgrading visual-studio-code...
+  ╭ ✓  Homebrew          update index                                     1s
+  │ ✓  Report            scan versions                                    3s
+  │ ✓  Homebrew          upgrade formulae                                42s
+  ┃ ⢿  Homebrew          upgrade casks                                 01:13
+  │    ╰ ==> Fetching downloads for: android-studio
+  │ ○  npm               global packages
+  ╰ ○  Report            save to Desktop
 ```
 
 ## What it does
@@ -47,21 +46,17 @@ Verbose output streams to a per-run log file; the dashboard only shows status.
 ## Install
 
 ```bash
-git clone https://github.com/mytler/updatetools.git
+git clone https://github.com/dekrezz/updatetools.git
 cd updatetools
-chmod +x updatetools updatetools-tui
 
-# put them on your PATH (example)
 mkdir -p ~/.local/bin
-cp updatetools updatetools-tui updatetools-lib.sh ~/.local/bin/
+install -m 755 updatetools ~/.local/bin/
 # make sure ~/.local/bin is on your PATH in ~/.zshrc:
 #   export PATH="$HOME/.local/bin:$PATH"
 ```
 
-> All three files must live in the same directory: `updatetools-tui` is exec'd by
-> `updatetools` by relative path, and both `source` the shared `updatetools-lib.sh`
-> (which holds the app-close logic and the report generator). If the library is
-> missing, both warn and fall back to the old blanket cask staging.
+> One file, nothing else to copy: the dashboard, the plain run, the cask
+> close logic and the HTML report generator all live inside `updatetools`.
 
 ## Usage
 
@@ -82,8 +77,8 @@ without any flag.
 
 | Flag | Effect |
 |------|--------|
-| `--plain`, `--no-pretty`, `--no-tui` | Force plain scrolling output instead of the dashboard. |
-| `--pretty`, `--tui` | Force the dashboard (default; useful only to override `PLAIN=1`). |
+| `--plain` | Force plain scrolling output instead of the dashboard. |
+| `--dashboard` | Force the dashboard (default; useful only to override `PLAIN=1`). |
 | `--macos`, `--all` | Install macOS **and** Mac App Store updates. Off by default. |
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
 | `--no-close` | Never close running apps — stage every cask upgrade with `--no-quit`. |
@@ -148,8 +143,14 @@ Claude Code      1.2.3  →  1.3.0       View changelog ↗
 
 Versions come from a snapshot taken right after `brew update` (so `old → new` is
 accurate) diffed against the post-run state; changelog links are a curated,
-manually-maintained map (in `updatetools-lib.sh`). Disable with `--no-report`, or
-keep it but don't auto-open with `--no-open`.
+manually-maintained map. Disable with `--no-report`, or keep it but don't
+auto-open with `--no-open`.
+
+The page is dark/light aware, works offline, and shows each tool with its own
+logo — bundled vector marks from [Simple Icons](https://simpleicons.org) (CC0),
+falling back to the project's own site icon, cached under
+`~/.cache/updatetools/icons`. Tool names use the vendor's spelling as recorded by
+Homebrew (`ChatGPT`, `GitHub Copilot`), so the report reads like the products do.
 
 ## Why macOS updates are opt-in
 
@@ -158,29 +159,41 @@ OS and App Store updates are never installed by default. A normal run only *list
 available macOS updates; pass `--macos` (or `MACOS_UPDATES=1`) to actually install
 them.
 
-## The dashboard (`updatetools-tui`)
+## The dashboard
 
-- Spinner on the active step, live tail of its output.
-- Progress bar, percentage, and elapsed timer.
-- Status icons: `✓` done · `–` skipped · `✗` failed · `○` pending.
+- A timeline rail down the left edge, with the active step marked and washed.
+- Sub-cell progress bar (⅛-cell resolution), percentage, counters, elapsed timer.
+- Per-step durations, and the live tail of the running step's output beneath it.
+- Status icons: `✓` done · `·` skipped · `✗` failed · `○` pending.
 - Uses the alternate screen buffer (like `htop`/`vim`) and restores the terminal
   cleanly on exit or `Ctrl-C`.
-- Runs by default; falls back to plain `updatetools --plain` automatically when
-  not attached to a TTY (pipes, cron, CI), or when you pass `--plain`.
+- Every frame is sized to fit the window and auto-wrap is disabled, so the
+  dashboard never scrolls itself into the scrollback (iTerm2 saves alternate-screen
+  lines by default, which turns any stray scroll into an endless ribbon).
+- Only one run at a time: a second launch refuses with the running PID, since two
+  dashboards would paint over each other and collide on Homebrew's download lock.
+- Closing the window ends the run and takes the current step's process tree with
+  it, instead of leaving an orphan parked on a password prompt.
+- Runs by default; uses plain text automatically when not attached to a TTY
+  (pipes, cron, CI), or when you pass `--plain`.
 
 When all steps finish, the **summary is shown inside the dashboard** (counts,
 failed steps, log path) and it waits for you to **press `q`** to quit:
 
 ```
-   ⟳ updatetools finished in 00:57
-   ✓ 11 updated   – 19 skipped   ✗ 1 failed
+  ────────────────────────────────────────────────────────────────────────────
 
-   Failed steps:
-     ✗ Codex CLI
+  all done  ·  12:34 elapsed
 
-   Full log: /var/folders/.../updatetools-39499.log
+   ✓ 14 updated   · 2 skipped   ✗ 1 failed
 
-   Press q to quit
+  failed
+    ✗ Homebrew · upgrade casks
+
+  report  /Users/you/Desktop/updatetools-report-20260815.html
+  log     /var/folders/.../updatetools-39499.log
+
+   q  quit
 ```
 
 The same summary is also echoed to the normal screen afterwards, so the log path
@@ -195,7 +208,9 @@ stays in your scrollback.
   use a Homebrew/`rbenv` Ruby if you want gems managed.
 - **Homebrew Python** is externally managed, so global `pip` upgrades are skipped
   on purpose; use `pipx`/`uv` for tools.
-- A UTF-8 locale is forced internally so the dashboard box always aligns.
+- A UTF-8 locale is forced internally so the dashboard always aligns.
+- The report needs `jq` (ships with macOS) for vendor names and site icons;
+  without it, names fall back to the package token and logos to a monogram.
 
 ## Requirements
 
