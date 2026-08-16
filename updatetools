@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # updatetools — update everything updatable on this Mac.
 #
-# One file: the animated dashboard, the plain-text run, the cask close logic and
-# the HTML report all live here — one script, no companion files.
+# The run has no terminal UI: it serves a live dashboard on 127.0.0.1 and opens
+# it in your browser. One file, no companion scripts, nothing left on disk.
 #
 # Usage:
-#   updatetools                 # animated dashboard (default, on a terminal)
-#   updatetools --plain         # plain scrolling text output (no dashboard)
+#   updatetools                 # opens a live dashboard in your browser
+#   updatetools --plain         # plain scrolling text output, no browser
 #   updatetools --no-greedy     # don't force-upgrade casks that self-manage
 #   updatetools --no-close      # never close running apps (stage all cask upgrades)
-#   updatetools --no-report     # don't write the HTML report to the Desktop
-#   updatetools --no-open       # write the report but don't open it in a browser
+#   updatetools --debug         # keep the run's log and write the HTML report to
+#                               # the Desktop (both are temporary otherwise)
 #
 # Env toggles:
-#   GREEDY=0 PLAIN=1 CLOSE_APPS=0 MAKE_REPORT=0 OPEN_REPORT=0
+#   GREEDY=0 PLAIN=1 CLOSE_APPS=0 DEBUG=1
 #   UPDATETOOLS_CLOSE="a b"      # force-close these cask apps to upgrade them now
 #   UPDATETOOLS_PROTECT="a b"    # never close these cask apps
 set -u
@@ -22,25 +22,27 @@ GREEDY="${GREEDY:-1}"
 PLAIN="${PLAIN:-0}"
 CLOSE_APPS="${CLOSE_APPS:-1}"
 MAKE_REPORT="${MAKE_REPORT:-1}"
-OPEN_REPORT="${OPEN_REPORT:-1}"
+OPEN_REPORT="${OPEN_REPORT:-0}"
+# Debug keeps the artefacts a normal run throws away: the step log and the HTML
+# report. Without it the dashboard is the whole output and nothing is left behind.
+DEBUG="${DEBUG:-0}"
 # Watchdog: kill a step that emits no output for this many seconds. 0 disables.
 STALL_TIMEOUT="${STALL_TIMEOUT:-300}"
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-300}"
 
 for arg in "$@"; do
   case "$arg" in
-    --plain)     PLAIN=1 ;;
-    --dashboard) PLAIN=0 ;;
-    --no-greedy)                  GREEDY=0 ;;
-    --no-close)                   CLOSE_APPS=0 ;;
-    --no-report)                  MAKE_REPORT=0 ;;
-    --no-open)                    OPEN_REPORT=0 ;;
+    --plain)         PLAIN=1 ;;
+    --web)           PLAIN=0 ;;
+    --debug|--keep)  DEBUG=1 ;;
+    --no-greedy)     GREEDY=0 ;;
+    --no-close)      CLOSE_APPS=0 ;;
     -h|--help)  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $arg"; exit 2 ;;
   esac
 done
 [ "$GREEDY" = "1" ] && GREEDY_FLAG="--greedy" || GREEDY_FLAG=""
-export CLOSE_APPS MAKE_REPORT OPEN_REPORT
+export CLOSE_APPS MAKE_REPORT OPEN_REPORT DEBUG
 
 # Homebrew env
 if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -568,7 +570,9 @@ _ut_emit_card() {  # $1 rawname, $2 old, $3 new, $4 out_file
 ut_generate_report() {  # $1 = optional output path
   [ "${MAKE_REPORT:-1}" = "1" ] || return 0
   local out="${1:-}"
-  [ -n "$out" ] || out="$HOME/Desktop/updatetools-report-$(date '+%Y%m%d-%H%M%S').html"
+  # UT_REPORT_OUT lets a run redirect the report — the browser dashboard points it
+  # at its own served directory so nothing is dropped on the Desktop.
+  [ -n "$out" ] || out="${UT_REPORT_OUT:-$HOME/Desktop/updatetools-report-$(date '+%Y%m%d-%H%M%S').html}"
   local data data2 after_brew after_cli
   data="$(mktemp)"; data2="$(mktemp)"
 
@@ -602,6 +606,9 @@ ut_generate_report() {  # $1 = optional output path
   awk -F'|' '{ rows[$1]=$0; seq[$1]=NR } END { for (k in rows) print seq[k]"\t"rows[k] }' \
       "$data" | sort -n | cut -f2- > "$data2"
 
+  # Hand the same records to the live dashboard, so its "after" section shows
+  # the identical diff without recomputing it.
+  [ -n "${UT_WEB_DATA:-}" ] && cp "$data2" "$UT_WEB_DATA" 2>/dev/null
   generate_html_report "$out" "$data2" >/dev/null
   printf '%s' "$out" > "$UT_LASTREPORT"
   rm -f "$data" "$data2"
@@ -809,6 +816,24 @@ ut_icon_datauri() {
   printf 'data:%s;base64,%s' "$mime" "$b64"
 }
 
+# ut_icon_site NAME — where to fetch a logo for tools Simple Icons doesn't ship.
+# Same cache and fallback as everything else; empty means "no idea".
+ut_icon_site() {
+  local n
+  n=$(printf '%s' "${1-}" | tr '[:upper:]' '[:lower:]')
+  case "$n" in
+    *"vs code"*|vscode*|*"visual studio code"*) echo "https://code.visualstudio.com" ;;
+    chatgpt*|openai*)                           echo "https://openai.com" ;;
+    codex*)                                     echo "https://openai.com" ;;
+    antigravity*|agy)                           echo "https://antigravity.google" ;;
+    *"wispr"*)                                  echo "https://wisprflow.ai" ;;
+    simdjson*)                                  echo "https://simdjson.org" ;;
+    ggml*)                                      echo "https://github.com/ggml-org/ggml" ;;
+    mise*)                                      echo "https://mise.jdx.dev" ;;
+    *)                                          echo "" ;;
+  esac
+}
+
 # ut_icon_slug NAME — map a tool name to a Simple Icons slug (empty if unknown,
 # in which case the report falls back to a monogram).
 ut_icon_slug() {
@@ -974,6 +999,7 @@ generate_html_report() {
       # fall back to a monogram if that fails too (offline, no homepage, …).
       local uri="" home
       home=$(ut_icon_homepage "$key")
+      [ -z "$home" ] && home=$(ut_icon_site "$display")
       [ -n "$home" ] && uri=$(ut_icon_datauri "$home")
       if [ -n "$uri" ]; then
         logo="<span class=\"logo\"><img src=\"$uri\" alt=\"\" loading=\"lazy\" decoding=\"async\"></span>"
@@ -1359,9 +1385,865 @@ HTML_TAIL
 }
 
 # ===========================================================================
-# Dashboard
+# Live dashboard (browser)
 # ===========================================================================
-run_dashboard() {
+# The run has no terminal UI: it serves a page on 127.0.0.1, opens it in the
+# default browser, and writes state.json after every state change. The page
+# polls that file and shows the whole run — the plan before it starts, progress
+# while it runs, and the version diff once it's done.
+#
+# Why a file + poll rather than a socket: the run is a shell script whose steps
+# are separate processes; a plain JSON snapshot written atomically is the one
+# thing every part of it can update without holding a connection.
+
+WEB_DIR=""; WEB_PID=""; WEB_URL=""; WEB_OPENED=0
+
+# ut_json_escape STRING — escape for a JSON string literal (control chars too).
+ut_json_escape() {
+  local s=${1-}
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\t'/\\t}
+  s=${s//$'\r'/}
+  s=${s//$'\n'/\\n}
+  # strip anything else below 0x20 that survived
+  printf '%s' "$s" | LC_ALL=C tr -d '\000-\010\013\014\016-\037'
+}
+
+# ut_web_page > index.html — the dashboard document (self-contained).
+ut_web_page() {
+  cat <<'WEB_HTML_HEAD'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>updatetools</title>
+<style>
+  :root{
+    color-scheme: light dark;
+    --accent:#5C8CFF; --ok:#4ADE80; --warn:#FAB93A; --bad:#F87171;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --r:14px;
+    --shadow:0 1px 2px rgba(0,0,0,.06), 0 8px 24px -12px rgba(0,0,0,.18);
+    --bg:#0B0D10; --bg-tint:#12151B;
+    --surface:rgba(255,255,255,.045); --surface-2:rgba(255,255,255,.07);
+    --hairline:rgba(255,255,255,.09); --hairline-strong:rgba(255,255,255,.16);
+    --text:#ECEEF4; --text-2:#A8AEC0; --text-3:#6C7386;
+    --chrome:rgba(14,16,22,.72);
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#F6F7FB; --bg-tint:#FFFFFF;
+      --surface:rgba(255,255,255,.72); --surface-2:#FFFFFF;
+      --hairline:rgba(9,12,25,.09); --hairline-strong:rgba(9,12,25,.18);
+      --text:#12151C; --text-2:#5A6076; --text-3:#878DA0;
+      --chrome:rgba(246,247,251,.72);
+      --shadow:0 1px 2px rgba(16,20,40,.06), 0 10px 30px -14px rgba(16,20,40,.25);
+    }
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:1rem/1.5 var(--sans); -webkit-font-smoothing:antialiased;
+    transition:background-color .4s ease, color .4s ease;
+  }
+  .wrap{max-width:52rem; margin:0 auto; padding:0 1.5rem 6rem}
+
+  .masthead{padding:4.5rem 0 2rem}
+  h1{
+    margin:0; font-size:clamp(2.25rem,1.5rem + 2.8vw,3.25rem); line-height:1;
+    letter-spacing:-.03em; font-weight:700; color:var(--text);
+  }
+  .meta{
+    margin:1.125rem 0 0; font-size:1rem; color:var(--text-2);
+    display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap;
+  }
+  .meta strong{color:var(--text); font-weight:600; font-variant-numeric:tabular-nums}
+  .meta .sep{color:var(--text-3)}
+  .meta .clock{font-variant-numeric:tabular-nums; letter-spacing:0}
+
+  /* ── progress ──────────────────────────────────────────────────────────── */
+  .progress{margin:1.75rem 0 0}
+  .track{
+    height:.375rem; border-radius:999px; background:var(--surface-2);
+    border:1px solid var(--hairline); overflow:hidden;
+  }
+  .fill{
+    height:100%; width:0; border-radius:999px; background:var(--text);
+    /* width is spring-driven from JS; no CSS transition, so it stays interruptible */
+  }
+  /* Counters: an icon, a number, a word — on one line, no plate around them.
+     A bordered grid with uppercase labels read like a terminal table; this reads
+     like a status line. Zero counts stay quiet instead of demanding attention. */
+  .stats{display:flex; align-items:center; gap:1.5rem; margin-top:1.25rem; flex-wrap:wrap}
+  .stat{
+    display:inline-flex; align-items:center; gap:.5rem; min-width:0;
+    color:var(--text-3); transition:opacity .3s ease;
+  }
+  .stat:not(.has){opacity:.45}
+  .stat svg{width:1.125rem; height:1.125rem; flex:none}
+  .stat.ok.has  svg{color:var(--ok)}
+  .stat.bad.has svg{color:var(--bad)}
+  .stat .v{
+    font-size:1.125rem; font-weight:650; letter-spacing:-.01em;
+    font-variant-numeric:tabular-nums; color:var(--text-3);
+  }
+  .stat.has .v{color:var(--text)}
+  .stat .k{font-size:.9375rem; color:var(--text-3)}
+
+  /* ── steps: a timeline rail, like the terminal had ─────────────────────── */
+  .steps{margin:2rem 0 0; position:relative}
+  .step{
+    position:relative; display:grid;
+    grid-template-columns:1.5rem 1.5rem minmax(6rem,1fr) auto;
+    align-items:center; gap:.875rem; padding:.625rem .75rem;
+    border-radius:10px; border:1px solid transparent;
+    cursor:pointer; -webkit-tap-highlight-color:transparent;
+    transition:background .15s ease;
+  }
+  .step:hover{background:var(--surface)}
+  .step:active{background:var(--surface-2)}
+  .step.open{background:var(--surface); border-color:var(--hairline)}
+  /* each step's own output, opened in place */
+  .steplog{
+    grid-column:1 / -1; margin:.5rem 0 .25rem; padding:.75rem .875rem;
+    border-radius:10px; background:var(--bg-tint); border:1px solid var(--hairline);
+    font-family:var(--mono); font-size:.75rem; line-height:1.55; color:var(--text-2);
+    max-height:18rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere;
+  }
+  .steplog:empty::after{content:"no output"; color:var(--text-3)}
+  .step.run{background:var(--surface); border-color:var(--hairline)}
+  .step .rail{
+    position:relative; width:1.5rem; height:100%; justify-self:center;
+    display:grid; place-items:center;
+  }
+  /* the vertical line joining the nodes */
+  .step .rail::before{
+    content:""; position:absolute; top:-.75rem; bottom:-.75rem; width:1.5px;
+    background:var(--hairline-strong);
+  }
+  .step:first-child .rail::before{top:50%}
+  .step:last-child .rail::before{bottom:50%}
+  .node{
+    position:relative; width:.6875rem; height:.6875rem; border-radius:50%;
+    background:var(--bg); border:1.5px solid var(--hairline-strong);
+  }
+  .step.done .node{background:var(--ok); border-color:var(--ok)}
+  .step.fail .node{background:var(--bad); border-color:var(--bad)}
+  .step.skip .node{background:var(--bg); border-color:var(--hairline)}
+  .step.run  .node{
+    background:var(--warn); border-color:var(--warn);
+    box-shadow:0 0 0 0 color-mix(in oklab,var(--warn) 60%,transparent);
+    animation:pulse 1.6s ease-out infinite;
+  }
+  @keyframes pulse{
+    to{box-shadow:0 0 0 .55rem color-mix(in oklab,var(--warn) 0%,transparent)}
+  }
+  .logo{display:grid; place-items:center; width:1.5rem; height:1.5rem; opacity:.9}
+  .logo svg{width:1.25rem; height:1.25rem; display:block}
+  .logo img{width:1.25rem; height:1.25rem; border-radius:5px; object-fit:contain}
+  .logo.mono{
+    font:600 .75rem/1 var(--sans); color:var(--text-3);
+    border:1px solid var(--hairline); border-radius:6px;
+  }
+  .label{min-width:0}
+  .label .n{font-weight:600; letter-spacing:-.005em}
+  .label .a{color:var(--text-3); margin-left:.5rem; font-size:.9375rem}
+  .step.skip .label .n,.step.skip .label .a{color:var(--text-3); font-weight:500}
+  .took{font-size:.875rem; color:var(--text-3); font-variant-numeric:tabular-nums}
+  .step.run .took{color:var(--warn)}
+
+  /* live output of the running step, pinned under its own row */
+  .tail{
+    grid-column:3 / -1; font-family:var(--mono); font-size:.75rem; color:var(--text-3);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-top:.25rem;
+  }
+
+  /* ── result ────────────────────────────────────────────────────────────── */
+  .result{margin:3rem 0 0; display:none}
+  .result.on{display:block}
+  .rule{height:1px; background:var(--hairline); margin:0 0 2rem}
+  .verdict{display:flex; align-items:center; gap:.875rem}
+  .verdict .mark{
+    width:2.75rem; height:2.75rem; border-radius:50%; display:grid; place-items:center;
+    background:color-mix(in oklab,var(--ok) 16%,transparent); color:var(--ok); flex:none;
+  }
+  .verdict.bad .mark{background:color-mix(in oklab,var(--bad) 16%,transparent); color:var(--bad)}
+  .verdict.warn .mark{background:color-mix(in oklab,var(--warn) 18%,transparent); color:var(--warn)}
+  .verdict .mark svg{width:1.5rem; height:1.5rem}
+  .headline{font-size:1.625rem; font-weight:700; letter-spacing:-.025em; margin:0; line-height:1.1}
+  .sub{margin:.25rem 0 0; color:var(--text-2); font-size:.9375rem}
+  .section-title{
+    margin:2rem 0 0; display:flex; align-items:baseline; gap:.5rem;
+    font-size:.9375rem; color:var(--text-2);
+  }
+  .section-title b{color:var(--text); font-weight:600}
+  .cards{display:flex; flex-direction:column; gap:.5rem; margin-top:.875rem}
+  .card{
+    border:1px solid var(--hairline); border-radius:var(--r); background:var(--surface);
+    box-shadow:var(--shadow); display:grid;
+    grid-template-columns:1.75rem minmax(6rem,1fr) auto; align-items:center;
+    gap:1rem; padding:1rem 1.125rem;
+  }
+  .card .name{font-weight:600}
+  .ver{font-family:var(--mono); font-size:.8125rem; display:flex; align-items:center; gap:.5rem; white-space:nowrap}
+  .ver .old{color:var(--text-3)} .ver .arrow{color:var(--text-3)} .ver .new{color:var(--text); font-weight:600}
+  /* Files: a path is something you copy or open, so give it affordances rather
+     than printing it as loose grey text. */
+  .files{margin-top:1.75rem; display:flex; flex-direction:column; gap:.5rem}
+  .file{
+    display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center;
+    gap:.875rem; padding:.75rem .875rem; border:1px solid var(--hairline);
+    border-radius:12px; background:var(--surface);
+  }
+  .file .k{font-size:.9375rem; color:var(--text-2); font-weight:550}
+  .file .p{
+    font-family:var(--mono); font-size:.8125rem; color:var(--text-2);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left;
+  }
+  .file .act{display:flex; gap:.375rem}
+  .btn{
+    border:1px solid var(--hairline); border-radius:9px; background:none;
+    color:var(--text-2); font:inherit; font-size:.8125rem; padding:.3125rem .625rem;
+    cursor:pointer; transition:border-color .15s ease, color .15s ease, transform .1s ease-out;
+  }
+  .btn:hover{border-color:var(--hairline-strong); color:var(--text)}
+  .btn:active{transform:scale(.97)}          /* feedback on press, not release */
+  .btn.done{color:var(--ok); border-color:color-mix(in oklab,var(--ok) 45%,transparent)}
+
+  /* The log itself, in this window — no switching to a terminal to read it. */
+  .logbox{overflow:hidden; margin-top:.5rem}
+  .logbox pre{
+    margin:0; padding:.875rem 1rem; border:1px solid var(--hairline); border-radius:12px;
+    background:var(--bg-tint); color:var(--text-2);
+    font-family:var(--mono); font-size:.75rem; line-height:1.55;
+    max-height:24rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere;
+  }
+
+
+  /* ── password sheet ────────────────────────────────────────────────────── */
+  .scrim{
+    position:fixed; inset:0; z-index:50; display:grid; place-items:center; padding:1.5rem;
+    background:color-mix(in oklab,var(--bg) 55%,transparent);
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    opacity:0; pointer-events:none; transition:opacity .25s ease;
+  }
+  .scrim.on{opacity:1; pointer-events:auto}
+  .sheet{
+    width:min(28rem,100%); padding:1.5rem; border-radius:18px;
+    background:var(--bg-tint); border:1px solid var(--hairline);
+    box-shadow:0 24px 60px -20px rgba(0,0,0,.55);
+    transform:scale(.96); transition:transform .28s cubic-bezier(.2,.8,.2,1);
+  }
+  .scrim.on .sheet{transform:scale(1)}
+  .sheet h3{margin:0; font-size:1.125rem; font-weight:650; letter-spacing:-.015em}
+  .sheet p{margin:.375rem 0 1.125rem; color:var(--text-2); font-size:.9375rem}
+  /* Nothing is rendered as you type — no characters, no dots — exactly like a
+     terminal password prompt. The caret still moves, so it's clear input lands. */
+  .pw{
+    width:100%; padding:.75rem .875rem; border-radius:11px; font:inherit;
+    border:1px solid var(--hairline-strong); background:var(--surface);
+    color:transparent; text-shadow:none; caret-color:var(--text);
+    -webkit-text-security:none; letter-spacing:0;
+  }
+  .pw::selection{background:transparent}
+  .pw:focus{outline:none; border-color:color-mix(in oklab,var(--accent) 65%,transparent)}
+  .sheet .row{display:flex; align-items:center; gap:.75rem; margin-top:1rem}
+  .sheet .hint{font-size:.8125rem; color:var(--text-3); flex:1}
+  .go{
+    padding:.5rem .875rem; border-radius:10px; border:1px solid transparent;
+    background:var(--text); color:var(--bg); font:inherit; font-weight:600;
+    cursor:pointer; transition:transform .1s ease-out, opacity .15s ease;
+  }
+  .go:active{transform:scale(.97)}
+  .go[disabled]{opacity:.4; cursor:default}
+
+  @media (prefers-reduced-motion: reduce){
+    .step.run .node{animation:none}
+  }
+  @media (prefers-reduced-transparency: reduce){
+    .card,.pill,.step.run{background:var(--bg-tint); backdrop-filter:none}
+  }
+  @media (prefers-contrast: more){
+    :root{--hairline:currentColor; --hairline-strong:currentColor}
+    .card,.pill,.step.run{background:var(--bg-tint)}
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="masthead">
+      <h1>updatetools</h1>
+      <p class="meta">
+        <strong id="phase">starting…</strong>
+        <span class="sep">·</span>
+        <span class="clock" id="clock">00:00</span>
+      </p>
+      <div class="progress">
+        <div class="track"><div class="fill" id="fill"></div></div>
+        <div class="stats">
+          <div class="stat ok" id="s-done">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.25 12.25 2.5 2.5 5-5.5"/></svg>
+            <span class="v" id="c-done">0</span><span class="k">done</span>
+          </div>
+          <div class="stat skip" id="s-skip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 12h7"/></svg>
+            <span class="v" id="c-skip">0</span><span class="k">skipped</span>
+          </div>
+          <div class="stat bad" id="s-fail">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9.25 9.25 5.5 5.5M14.75 9.25l-5.5 5.5"/></svg>
+            <span class="v" id="c-fail">0</span><span class="k">failed</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="steps" id="steps"></section>
+
+    <section class="result" id="result">
+      <div class="rule"></div>
+      <div class="verdict" id="verdict">
+        <span class="mark" id="r-mark"></span>
+        <span>
+          <h2 class="headline" id="r-head">All done</h2>
+          <p class="sub" id="r-sub"></p>
+        </span>
+      </div>
+      <p class="section-title" id="r-title" hidden></p>
+      <div class="cards" id="r-cards"></div>
+    </section>
+
+    <section class="files" id="files"></section>
+    <div class="logbox" id="logbox" hidden><pre id="logtext"></pre></div>
+  </div>
+  <div class="scrim" id="scrim">
+    <form class="sheet" id="pwform">
+      <h3 id="pw-title">Password</h3>
+      <p>A step needs your macOS password to continue. It goes straight to <code>sudo</code> on this Mac and is never stored.</p>
+      <input class="pw" id="pw" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Password">
+      <div class="row">
+        <span class="hint">Nothing is shown as you type</span>
+        <button class="go" type="submit">Continue</button>
+      </div>
+    </form>
+  </div>
+WEB_HTML_HEAD
+
+  # Logo sprite: every bundled mark, so a step can show its tool instantly.
+  printf '  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>\n'
+  ut_icon_db | while IFS=' ' read -r s hex path; do
+    [ -n "$s" ] || continue
+    printf '    <symbol id="i-%s" viewBox="0 0 24 24"><path fill="#%s" d="%s"/></symbol>\n' "$s" "$hex" "$path"
+  done
+  printf '  </defs></svg>\n'
+
+  cat <<'WEB_HTML_TAIL'
+<script>
+(() => {
+  'use strict';
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const $ = (id) => document.getElementById(id);
+
+  /* critically-damped spring, started from the live value — same behaviour the
+     terminal bar had, minus the character grid */
+  function spring(get, set, target, response = 0.5) {
+    if (reduce) { set(target); return; }
+    const w = (2 * Math.PI) / response;
+    let x = get() - target, v = 0, last = performance.now();
+    const tick = (now) => {
+      const dt = Math.min((now - last) / 1000, 1 / 30); last = now;
+      v += (-w * w * x - 2 * w * v) * dt; x += v * dt;
+      if (Math.abs(x) < 0.001 && Math.abs(v) < 0.001) { set(target); return; }
+      set(target + x); requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
+  const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  const dur = (s) => (s == null ? '' : s < 60 ? `${s}s` : fmt(s));
+
+  function logo(slug, img, name) {
+    if (img) return `<span class="logo"><img src="${img}" alt=""></span>`;
+    if (slug) return `<span class="logo"><svg viewBox="0 0 24 24"><use href="#i-${slug}"/></svg></span>`;
+    return `<span class="logo mono">${(name || '?').charAt(0).toUpperCase()}</span>`;
+  }
+
+  let barPct = 0, lastSig = '';
+  function render(st) {
+    // header
+    $('phase').textContent =
+      st.phase === 'done' ? (st.fail ? `${st.done} updated, ${st.fail} failed` : `${st.done} steps completed`)
+                          : `${st.done + st.skip + st.fail} of ${st.total} steps`;
+    $('clock').textContent = fmt(st.elapsed || 0);
+    for (const [k, n] of [['done', st.done], ['skip', st.skip], ['fail', st.fail]]) {
+      $('c-' + k).textContent = n;
+      $('s-' + k).classList.toggle('has', n > 0);   // zero stays quiet, grey
+    }
+
+    const pct = st.total ? ((st.done + st.skip + st.fail) / st.total) * 100 : 0;
+    spring(() => barPct, (v) => { barPct = v; $('fill').style.width = v + '%'; }, pct, 0.5);
+
+    // steps — rebuilt only when something actually changed
+    const sig = st.steps.map((s) => s.s + (s.t ?? '')).join('|') + '¦' + (st.tail || '');
+    if (sig !== lastSig) {
+      lastSig = sig;
+      $('steps').innerHTML = st.steps.map((s) => `
+        <div class="step ${s.s}" data-label="${s.a ? `${s.n} · ${s.a}` : s.n}" role="button" tabindex="0">
+          <span class="rail"><span class="node"></span></span>
+          ${logo(s.slug, s.img, s.n)}
+          <span class="label"><span class="n">${s.n}</span>${s.a ? `<span class="a">${s.a}</span>` : ''}</span>
+          <span class="took">${s.s === 'run' ? fmt(st.elapsed - (s.b ?? st.elapsed)) : dur(s.t)}</span>
+          ${s.s === 'run' && st.tail ? `<span class="tail">${st.tail}</span>` : ''}
+        </div>`).join('');
+      // re-attach any log panes the user had open before this repaint
+      for (const el of $('steps').children) {
+        const label = el.dataset.label;
+        if (opened.has(label)) paintStepLog(el, label);
+      }
+    } else {
+      // cheap path: only the running step's clock ticks
+      const run = st.steps.findIndex((s) => s.s === 'run');
+      if (run >= 0) {
+        const el = $('steps').children[run];
+        if (el) el.querySelector('.took').textContent = fmt(st.elapsed - (st.steps[run].b ?? st.elapsed));
+      }
+    }
+
+    // result
+    if (st.phase === 'done') {
+      $('result').classList.add('on');
+      // A red cross means "this run achieved nothing". One failed step among many
+      // successful ones is a warning, not a failure of the whole run.
+      const failed = st.fail > 0, total_fail = failed && st.done === 0;
+      $('verdict').classList.toggle('bad', total_fail);
+      $('verdict').classList.toggle('warn', failed && !total_fail);
+      $('r-mark').innerHTML = total_fail
+        ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m8 8 8 8M16 8l-8 8"/></svg>`
+        : failed
+        ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7.5v6M12 16.8v.2"/></svg>`
+        : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 12.5 4 4 8-9"/></svg>`;
+      $('r-head').textContent = total_fail ? 'Nothing could be updated'
+        : failed ? `Done, ${st.fail} step${st.fail === 1 ? '' : 's'} needs attention`
+        : 'Your Mac is up to date';
+      $('r-sub').textContent =
+        `${st.done} steps completed · ${st.skip} skipped${failed ? ` · ${st.fail} failed` : ''} · took ${fmt(st.elapsed)}`;
+
+      const ups = st.updates || [];
+      $('r-title').hidden = false;
+      $('r-title').innerHTML = ups.length
+        ? `<b>${ups.length}</b> ${ups.length === 1 ? 'tool' : 'tools'} moved to a new version`
+        : 'Everything was already on its latest version';
+      $('r-cards').innerHTML = ups.map((u) => `
+        <div class="card">
+          ${logo(u.slug, u.img, u.n)}
+          <span class="name">${u.n}</span>
+          <span class="ver"><span class="old">${u.o}</span><span class="arrow">→</span><span class="new">${u.w}</span></span>
+        </div>`).join('');
+      document.title = st.fail ? `updatetools — ${st.fail} failed` : 'updatetools — done';
+    } else {
+      document.title = `updatetools — ${Math.round(pct)}%`;
+    }
+  }
+
+  /* ── per-step output: the log is one file, split on the run's own banners ─── */
+  const opened = new Set();
+  let logText = '', logAt = 0;
+  async function fetchLog() {
+    if (Date.now() - logAt < 800) return logText;
+    try {
+      logText = await (await fetch('log.txt?t=' + Date.now(), { cache: 'no-store' })).text();
+      logAt = Date.now();
+    } catch { /* server gone: keep what we have */ }
+    return logText;
+  }
+  function sliceFor(label) {
+    const parts = logText.split(/^######## (.+?) ########$/m);
+    // split() gives [pre, name, body, name, body, …]
+    for (let i = 1; i < parts.length; i += 2) {
+      if (parts[i].trim() === label.trim()) return parts[i + 1].trim();
+    }
+    return '';
+  }
+  async function toggleStep(el, label) {
+    const isOpen = opened.has(label);
+    if (isOpen) { opened.delete(label); } else { opened.add(label); }
+    await fetchLog();
+    paintStepLog(el, label);
+  }
+  function paintStepLog(el, label) {
+    const existing = el.querySelector('.steplog');
+    if (!opened.has(label)) { existing?.remove(); el.classList.remove('open'); return; }
+    el.classList.add('open');
+    const box = existing || Object.assign(document.createElement('pre'), { className: 'steplog' });
+    const body = sliceFor(label);
+    if (box.textContent !== body) {
+      const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
+      box.textContent = body;
+      if (stick) box.scrollTop = box.scrollHeight;
+    }
+    if (!existing) el.appendChild(box);
+  }
+
+  /* ── files + the log, rendered once and kept in sync ─────────────────────── */
+  let filesSig = '';
+  function renderFiles(st) {
+    // A normal run keeps nothing on disk, so there is nothing to link to; paths
+    // only appear when --debug asked for the log and the report to be kept.
+    if (!st.debug) { $('files').innerHTML = ''; return; }
+    const sig = (st.report || '') + '|' + (st.log || '');
+    if (sig === filesSig) return;
+    filesSig = sig;
+    const row = (kind, path, extra) => `
+      <div class="file">
+        <span class="k">${kind}</span>
+        <span class="p" title="${path}">${path}</span>
+        <span class="act">
+          <button class="btn" data-copy="${path}">Copy path</button>
+          ${extra}
+        </span>
+      </div>`;
+    const rows = [];
+    if (st.report) rows.push(row('report', st.report, `<a class="btn" href="report.html" target="_blank" rel="noopener">Open</a>`));
+    if (st.log) rows.push(row('log', st.log, `<button class="btn" id="toggle-log">View</button>`));
+    $('files').innerHTML = rows.join('');
+
+    $('files').onclick = async (e) => {
+      const c = e.target.closest('[data-copy]');
+      if (c) {
+        try {
+          await navigator.clipboard.writeText(c.dataset.copy);
+          const was = c.textContent; c.textContent = 'Copied'; c.classList.add('done');
+          setTimeout(() => { c.textContent = was; c.classList.remove('done'); }, 1400);
+        } catch { /* clipboard blocked — the path is selectable anyway */ }
+        return;
+      }
+      if (e.target.id === 'toggle-log') {
+        const box = $('logbox');
+        box.hidden = !box.hidden;
+        e.target.textContent = box.hidden ? 'View' : 'Hide';
+        if (!box.hidden) loadLog();
+      }
+    };
+  }
+
+  async function loadLog() {
+    if ($('logbox').hidden) return;
+    try {
+      const r = await fetch('log.txt?t=' + Date.now(), { cache: 'no-store' });
+      const txt = await r.text();
+      const pre = $('logtext');
+      const stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+      pre.textContent = txt;
+      if (stick) pre.scrollTop = pre.scrollHeight;   // follow the tail unless scrolled up
+    } catch { /* server gone */ }
+  }
+
+
+  /* ── password sheet: shown when the run asks, posted back over loopback ─── */
+  let asking = false;
+  const scrim = $('scrim'), pwInput = $('pw');
+  function askPassword(prompt) {
+    if (asking) return;
+    asking = true;
+    $('pw-title').textContent = /again|wrong|sorry/i.test(prompt) ? 'Try again' : 'Password';
+    scrim.classList.add('on');
+    pwInput.value = '';
+    setTimeout(() => pwInput.focus(), 50);
+  }
+  function hidePassword() {
+    asking = false;
+    scrim.classList.remove('on');
+    pwInput.value = '';
+  }
+  $('pwform').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pw = pwInput.value;
+    pwInput.value = '';
+    hidePassword();
+    try {
+      await fetch('prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      });
+    } catch { /* the run will time out on its own */ }
+  });
+
+  $('steps').addEventListener('click', (e) => {
+    const el = e.target.closest('.step');
+    if (el) toggleStep(el, el.dataset.label);
+  });
+  $('steps').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const el = e.target.closest('.step');
+    if (el) { e.preventDefault(); toggleStep(el, el.dataset.label); }
+  });
+
+  let misses = 0;
+  async function poll() {
+    try {
+      const r = await fetch('state.json?t=' + Date.now(), { cache: 'no-store' });
+      const st = await r.json();
+      misses = 0;
+      render(st);
+      renderFiles(st);
+      if (st.prompt) askPassword(st.prompt); else if (asking) hidePassword();
+      loadLog();
+      if (st.phase === 'done') { setTimeout(poll, 2000); return; }
+    } catch (e) {
+      // the run exits and takes the server with it; nothing to announce
+      misses++;
+    }
+    setTimeout(poll, 400);
+  }
+  poll();
+})();
+</script>
+</body>
+</html>
+WEB_HTML_TAIL
+}
+
+# ut_web_state PHASE — write state.json atomically (the page may read at any time).
+# Globals it reads: STEPS/STATUS/STEP_T0/STEP_SEC/TOTAL/T0/LOG/UT_WEB_UPDATES.
+ut_web_state() {
+  [ -n "$WEB_DIR" ] || return 0
+  local phase="${1:-run}" i done_n=0 skip_n=0 fail_n=0 steps="" tail_line="" label name action slug
+  for ((i=0;i<TOTAL;i++)); do
+    case "${STATUS[i]}" in done) done_n=$((done_n+1));; skip) skip_n=$((skip_n+1));; fail) fail_n=$((fail_n+1));; esac
+    label="${STEPS[i]%%¦*}"; name="$label"; action=""
+    if [[ "$label" == *" · "* ]]; then name="${label%% · *}"; action="${label#* · }"; fi
+    slug="${STEP_SLUG[i]:-}"
+    [ -n "$steps" ] && steps+=","
+    steps+="{\"n\":\"$(ut_json_escape "$name")\",\"a\":\"$(ut_json_escape "$action")\",\"s\":\"${STATUS[i]}\""
+    steps+=",\"slug\":\"$slug\""
+    [ -n "${STEP_IMG[i]:-}" ] && steps+=",\"img\":\"${STEP_IMG[i]}\""
+    [ -n "${STEP_SEC[i]:-}" ] && steps+=",\"t\":${STEP_SEC[i]}"
+    [ -n "${STEP_T0[i]:-}" ]  && steps+=",\"b\":$(( ${STEP_T0[i]} - T0 ))"
+    steps+="}"
+  done
+  if [ "$phase" != "done" ]; then
+    tail_line=$(tail -n 1 "$LOG" 2>/dev/null | tr -d '\r' \
+      | LC_ALL=C sed $'s/\033\\[[0-9;?]*[a-zA-Z]//g' | cut -c1-160)
+  fi
+  # The page can open any step's output, so the log is always mirrored into the
+  # served dir (it is temporary either way and goes when the run ends).
+  tr -d '\r' < "$LOG" 2>/dev/null \
+    | LC_ALL=C sed $'s/\033\\[[0-9;?]*[a-zA-Z]//g' > "$WEB_DIR/.log.tmp" 2>/dev/null \
+    && mv -f "$WEB_DIR/.log.tmp" "$WEB_DIR/log.txt" 2>/dev/null
+  if [ "${DEBUG:-0}" = "1" ] && [ -n "${UT_WEB_REPORT:-}" ] && [ -f "$UT_WEB_REPORT" ]; then
+    cp -f "$UT_WEB_REPORT" "$WEB_DIR/report.html" 2>/dev/null
+  fi
+  {
+    printf '{"phase":"%s","elapsed":%d,"total":%d,"done":%d,"skip":%d,"fail":%d' \
+      "$phase" "$((SECONDS-T0))" "$TOTAL" "$done_n" "$skip_n" "$fail_n"
+    printf ',"tail":"%s"' "$(ut_json_escape "$tail_line")"
+    [ -n "${UT_PROMPT:-}" ] && printf ',"prompt":"%s"' "$(ut_json_escape "$UT_PROMPT")"
+    printf ',"debug":%s' "$([ "${DEBUG:-0}" = "1" ] && echo true || echo false)"
+    [ "${DEBUG:-0}" = "1" ] && printf ',"log":"%s"' "$(ut_json_escape "$LOG")"
+    [ "${DEBUG:-0}" = "1" ] && [ -n "${UT_WEB_REPORT:-}" ] && printf ',"report":"%s"' "$(ut_json_escape "$UT_WEB_REPORT")"
+    printf ',"steps":[%s]' "$steps"
+    [ -n "${UT_WEB_UPDATES:-}" ] && printf ',"updates":[%s]' "$UT_WEB_UPDATES"
+    printf '}\n'
+  } > "$WEB_DIR/.state.tmp" && mv -f "$WEB_DIR/.state.tmp" "$WEB_DIR/state.json"
+}
+
+# ut_web_updates DATA_FILE — turn the report's records into the JSON the page
+# shows in its "after" section (same logos and vendor names as the HTML report).
+ut_web_updates() {
+  local f=${1-} key display old new url slug img out=""
+  [ -r "$f" ] || return 0
+  while IFS='|' read -r key display old new url || [ -n "${key:-}" ]; do
+    [ -n "${key:-}" ] || continue
+    display=$(ut_pretty_name "$key" "${display:-$key}")
+    slug="$(ut_icon_slug "$display")"
+    img=""
+    if [ -z "$slug" ]; then
+      local home; home=$(ut_icon_homepage "$key") && img=$(ut_icon_datauri "$home") || img=""
+    fi
+    [ -n "$out" ] && out+=","
+    out+="{\"n\":\"$(ut_json_escape "$display")\",\"o\":\"$(ut_json_escape "${old%%,*}")\""
+    out+=",\"w\":\"$(ut_json_escape "${new%%,*}")\",\"slug\":\"$slug\""
+    [ -n "$img" ] && out+=",\"img\":\"$img\""
+    out+="}"
+  done < "$f"
+  printf '%s' "$out"
+}
+
+# ut_web_ask PROMPT — ask for a password in the browser and wait for the answer.
+# The page posts it back to the local server, which writes it straight to the
+# askpass reply file; nothing is typed into, or echoed by, the terminal.
+ut_web_ask() {
+  local waited=0 limit=$(( ${PROMPT_TIMEOUT:-300} * 5 ))
+  # Already answered once this run? Reuse it instead of asking again — brew calls
+  # sudo once per cask, and an unnoticed second prompt just times the step out.
+  if [ -n "${SUDO_PW:-}" ] && [ "${2:-}" != "force" ]; then
+    ( umask 077; printf '%s\n' "$SUDO_PW" > "$PROMPT_REP" )
+    return 0
+  fi
+  UT_PROMPT="${1:-Password:}"
+  rm -f "$PROMPT_REP"
+  ut_web_state run
+  while [ ! -s "$PROMPT_REP" ]; do
+    sleep 0.2
+    waited=$((waited+1))
+    if [ "$waited" -gt "$limit" ]; then UT_PROMPT=""; ut_web_state run; return 1; fi
+    # the tab was closed / server gone: nobody can answer any more
+    kill -0 "$WEB_PID" 2>/dev/null || { UT_PROMPT=""; return 1; }
+  done
+  UT_PROMPT=""
+  SUDO_PW=$(cat "$PROMPT_REP" 2>/dev/null)   # in memory only, never written out
+  ut_web_state run
+  return 0
+}
+
+# ut_web_start — serve the page on a free port and open it. Returns 1 if we
+# can't (no python3), so the caller can fall back to plain output.
+ut_web_start() {
+  have python3 || return 1
+  WEB_DIR=$(mktemp -d "${TMPDIR:-/tmp}/updatetools-web.XXXXXX") || return 1
+  ut_web_page > "$WEB_DIR/index.html" || return 1
+  ut_web_state "run"
+
+  # http.server with a no-store header, so a poll never reads a cached snapshot.
+  cat > "$WEB_DIR/serve.py" <<'SERVE_EOF'
+# Local dashboard server.
+#
+# Access control, in layers:
+#   1. bound to 127.0.0.1 only — never reachable from the network
+#   2. a random token: the opened URL carries ?k=…, which is exchanged for a
+#      HttpOnly cookie. Without it every request is 403, so another user on this
+#      Mac (or a random page in your browser) can't read the run or post to it.
+#   3. Host header must be loopback — blocks DNS-rebinding, where an external
+#      site resolves a name to 127.0.0.1 and talks to us from the victim's browser
+#   4. the password goes over this loopback socket only, and is written straight
+#      to the askpass reply file; it is never stored or echoed anywhere
+import http.server, socketserver, sys, os, threading, time, json, http.cookies
+
+root, token_file, reply_file, idle_timeout = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+# The token arrives in a 0600 file, not on the command line — argv is visible to
+# every user on the machine via ps, which would defeat the point of having one.
+with open(token_file) as f:
+    token = f.read().strip()
+os.unlink(token_file)
+os.chdir(root)
+state = {'last': time.time(), 'quit': False}
+
+class H(http.server.SimpleHTTPRequestHandler):
+    def _authed(self):
+        host = (self.headers.get('Host') or '').split(':')[0]
+        if host not in ('127.0.0.1', 'localhost', '[::1]', '::1'):
+            return False
+        if ('?k=' + token) in self.path or ('&k=' + token) in self.path:
+            return True
+        raw = self.headers.get('Cookie')
+        if raw:
+            c = http.cookies.SimpleCookie(raw)
+            if 'ut' in c and c['ut'].value == token:
+                return True
+        return False
+
+    def _deny(self):
+        self.send_response(403); self.send_header('Content-Length', '0'); self.end_headers()
+
+    def end_headers(self):
+        self.send_header('Cache-Control', 'no-store, must-revalidate')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        super().end_headers()
+
+    def do_GET(self):
+        state['last'] = time.time()
+        if not self._authed():
+            return self._deny()
+        if self.path.startswith('/?k=') or self.path == '/?k=' + token:
+            # first visit: swap the URL token for a cookie, then drop it from the
+            # address bar so the token isn't left sitting in history
+            self.send_response(302)
+            self.send_header('Set-Cookie', f'ut={token}; Path=/; HttpOnly; SameSite=Strict')
+            self.send_header('Location', '/')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        self.path = self.path.split('?')[0]
+        return super().do_GET()
+
+    def do_POST(self):
+        state['last'] = time.time()
+        if not self._authed():
+            return self._deny()
+        path = self.path.split('?')[0]
+        length = int(self.headers.get('Content-Length') or 0)
+        body = self.rfile.read(length) if length else b''
+        if path == '/prompt':
+            try:
+                pw = json.loads(body.decode('utf-8')).get('password', '')
+            except Exception:
+                pw = ''
+            # 0600 from the start: the reply file briefly holds the password
+            fd = os.open(reply_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                f.write(pw + '\n')
+            self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers()
+            return
+        if path == '/quit':
+            state['quit'] = True
+            self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers()
+            return
+        self._deny()
+
+    def log_message(self, *a): pass
+
+class Server(socketserver.ThreadingTCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+with Server(('127.0.0.1', 0), H) as srv:
+    print(srv.server_address[1], flush=True)
+    # The run has no terminal UI to quit from, so the page's lifetime ends the
+    # server: close the tab (polling stops) or press Close, and we shut down.
+    def watch():
+        while True:
+            time.sleep(1)
+            if state['quit'] or time.time() - state['last'] > idle_timeout:
+                srv.shutdown(); return
+    threading.Thread(target=watch, daemon=True).start()
+    srv.serve_forever()
+SERVE_EOF
+
+  # 128-bit token from the kernel's CSPRNG; the page trades it for a cookie.
+  # via python (already required here): `tr -dc … < /dev/urandom | head -c 32`
+  # can hang, since tr keeps reading the endless device after head has gone.
+  WEB_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(16))' 2>/dev/null)
+  [ -n "$WEB_TOKEN" ] || return 1
+  chmod 700 "$WEB_DIR" 2>/dev/null
+  local tokfile="$WEB_DIR/.token"
+  ( umask 077; printf '%s' "$WEB_TOKEN" > "$tokfile" )
+  python3 "$WEB_DIR/serve.py" "$WEB_DIR" "$tokfile" "$PROMPT_REP" "${WEB_IDLE:-20}" \
+    > "$WEB_DIR/port" 2>/dev/null &
+  WEB_PID=$!
+  local tries=0 port=""
+  while [ $tries -lt 50 ]; do
+    port=$(head -1 "$WEB_DIR/port" 2>/dev/null)
+    [ -n "$port" ] && break
+    sleep 0.1; tries=$((tries+1))
+  done
+  [ -n "$port" ] || { kill "$WEB_PID" 2>/dev/null; WEB_PID=""; return 1; }
+  WEB_URL="http://127.0.0.1:$port/?k=$WEB_TOKEN"
+  if open "$WEB_URL" 2>/dev/null; then WEB_OPENED=1; else WEB_OPENED=0; fi
+  return 0
+}
+
+ut_web_stop() {
+  [ -n "$WEB_PID" ] && kill "$WEB_PID" 2>/dev/null
+  WEB_PID=""
+  [ -n "$WEB_DIR" ] && rm -rf "$WEB_DIR" 2>/dev/null
+  WEB_DIR=""
+}
+
 npm_update_global() {
   # npm itself lives in /opt/homebrew and is brew-managed; npm update -g includes it
   # and fails with EACCES. Update only non-npm packages explicitly.
@@ -1435,341 +2317,86 @@ STEPS=(
 TOTAL=${#STEPS[@]}
 STATUS=()                       # done|skip|fail|run|pending per step
 for ((i=0;i<TOTAL;i++)); do STATUS[i]="pending"; done
-
-# ---------------------------------------------------------------------------
-# Rendering
-# ---------------------------------------------------------------------------
-SPIN='⣾⣽⣻⢿⡿⣟⣯⣷'
-FRAME=0
+# ===========================================================================
+# Runtime
+# ===========================================================================
 T0=$SECONDS
-FOOTER=""
-STEP_T0=()    # SECONDS when step i started
-STEP_SEC=()   # wall-clock seconds step i took (set once it finishes)
-
-# ---------------------------------------------------------------------------
-# Palette
-#
-# 24-bit colour with a 256-colour fallback: iTerm2/Terminal.app both do truecolor
-# now, but anything reporting a plain TERM gets the indexed approximation so the
-# dashboard degrades instead of printing raw escapes.
-# ---------------------------------------------------------------------------
-TRUECOLOR=1
-case "${COLORTERM:-}" in truecolor|24bit) TRUECOLOR=1 ;; *) [ "${TERM:-}" = "xterm-256color" ] || TRUECOLOR=0 ;; esac
-
-fg() { # fg <r> <g> <b>
-  if [ "$TRUECOLOR" = 1 ]; then printf '\033[38;2;%d;%d;%dm' "$1" "$2" "$3"
-  else printf '\033[38;5;%dm' $(( 16 + 36*($1*5/255) + 6*($2*5/255) + ($3*5/255) )); fi
-}
-bg() { # bg <r> <g> <b>
-  if [ "$TRUECOLOR" = 1 ]; then printf '\033[48;2;%d;%d;%dm' "$1" "$2" "$3"
-  else printf '\033[48;5;%dm' $(( 16 + 36*($1*5/255) + 6*($2*5/255) + ($3*5/255) )); fi
-}
-
-C_RST=$'\033[0m'; C_DIM=$'\033[2m'; C_B=$'\033[1m'
-C_VIO="$(fg 138 116 255)"   # brand violet
-C_CYAN="$(fg  60 214 210)"  # brand teal
-C_GRN="$(fg  74 222 128)"   # success
-C_RED="$(fg 248 113 113)"   # failure
-C_YEL="$(fg 250 204  90)"   # in-progress
-C_BLU="$(fg 125 178 255)"   # secondary accent
-C_TXT="$(fg 226 228 238)"   # primary text
-C_FNT="$(fg 150 155 175)"   # secondary text
-C_GRY="$(fg  86  92 112)"   # muted / track
-C_MAG="$C_VIO"              # kept: older call sites
-C_ROW="$(bg  30  32  44)"   # active-row wash
-C_BADGE="$(bg  38  40  54)" # pill background
-
-# Brand gradient (violet → indigo → teal), sampled per column. Everything that
-# needs a sweep — the wordmark, the progress bar, rules — reads from here, so the
-# whole dashboard shares one light source.
-GRAD_STOPS=(138,116,255 116,140,255 88,178,240 60,214,210)
-grad_at() { # grad_at <i> <n> -> emits the fg escape for position i of n
-  local i=$1 n=$2 seg segs t r1 g1 b1 r2 g2 b2 a b
-  segs=$(( ${#GRAD_STOPS[@]} - 1 )); (( n < 2 )) && n=2
-  local pos=$(( i * segs * 100 / (n-1) ))
-  seg=$(( pos / 100 )); (( seg > segs-1 )) && seg=$(( segs-1 ))
-  t=$(( pos - seg*100 ))
-  a="${GRAD_STOPS[seg]}"; b="${GRAD_STOPS[seg+1]}"
-  IFS=, read -r r1 g1 b1 <<<"$a"; IFS=, read -r r2 g2 b2 <<<"$b"
-  fg $(( r1 + (r2-r1)*t/100 )) $(( g1 + (g2-g1)*t/100 )) $(( b1 + (b2-b1)*t/100 ))
-}
-
+LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
+STATUS=(); STEP_T0=(); STEP_SEC=(); STEP_SLUG=(); STEP_IMG=()
+CUR_STEP=0; CUR_PID=""
 SUDO_KEEPER=""; WRAP_DIR=""; PROMPT_REQ=""; PROMPT_REP=""; LOCKDIR=""
-# Idempotent: it runs on INT/TERM, on EXIT, and explicitly before the final
-# summary — a second rmcup would restore the pre-dashboard screen and wipe it.
-CLEANED=""
-ALT_ON=0     # set once the alternate screen is actually entered
-cleanup() { [ -n "$CLEANED" ] && return; CLEANED=1; [ -n "$SUDO_KEEPER" ] && kill "$SUDO_KEEPER" 2>/dev/null; [ -n "$WRAP_DIR" ] && rm -rf "$WRAP_DIR" 2>/dev/null; [ -n "$LOCKDIR" ] && rm -rf "$LOCKDIR" 2>/dev/null; [ -n "${UT_LASTREPORT:-}" ] && rm -f "$UT_LASTREPORT" 2>/dev/null; [ -n "${UT_REPORT_DIR:-}" ] && rm -rf "$UT_REPORT_DIR" 2>/dev/null; if [ "$ALT_ON" = 1 ]; then printf '\033[?7h'; { tput rmcup 2>/dev/null || printf '\033[?1049l'; }; { tput cnorm 2>/dev/null || printf '\033[?25h'; }; fi; }
-trap 'cleanup; echo; echo "Interrupted. Full log: '"$LOG"'"; exit 130' INT TERM
-# Always release the lock and the wrap dir, however we leave — a run that exits
-# without cleanup leaves a stale lock that the next run reclaims while this one
-# may still be alive.
-trap 'cleanup' EXIT
-# Closing the window sends SIGHUP. Take the running step's process tree down with
-# us — brew ignores HUP (we set that so alt-screen toggles don't kill it), so it
-# would otherwise be left orphaned, parked on a password prompt nobody can answer.
-trap '[ -n "${CUR_PID:-}" ] && kill_tree "$CUR_PID"; cleanup; exit 129' HUP
-
-# The dashboard is only meaningful while its terminal exists. When the window is
-# closed the process gets orphaned (PPID 1, TTY ??) and keeps rendering into a
-# dead fd — and a later run then paints over the same screen. Bail out instead,
-# taking the current step's process tree with us.
-# Opening /dev/tty still succeeds after the window is gone, so that's no signal.
-# Losing the controlling terminal is: ps reports "??" for an orphaned run.
-tty_gone() { case "$(ps -o tty= -p $$ 2>/dev/null)" in ''|'??'|'?') return 0 ;; *) return 1 ;; esac; }
-abort_no_tty() {
-  [ -n "${CUR_PID:-}" ] && kill_tree "$CUR_PID" 2>/dev/null
-  cleanup
-  exit 130
-}
+UT_WEB_REPORT=""; UT_WEB_UPDATES=""; SUDO_PW=""; UT_PROMPT=""
+UT_WEB_DATA="${TMPDIR:-/tmp}/updatetools-updates-$$.txt"
+export UT_WEB_DATA
 
 fmt_time() { printf '%02d:%02d' $(( $1/60 )) $(( $1%60 )); }
 
-# bar <done> <total> <width> — gradient bar with 1/8-cell resolution, so it
-# advances smoothly instead of jumping a whole block at a time.
-SUB=('' '▏' '▎' '▍' '▌' '▋' '▊' '▉')
-bar() {
-  local done=$1 total=$2 w=${3:-$BAR_W} eighths filled rem s="" i
-  (( total < 1 )) && total=1
-  eighths=$(( done * w * 8 / total ))
-  filled=$(( eighths / 8 )); rem=$(( eighths % 8 ))
-  (( filled > w )) && { filled=$w; rem=0; }
-  for ((i=0;i<filled;i++)); do s+="$(grad_at "$i" "$w")█"; done
-  if (( rem > 0 && filled < w )); then s+="$(grad_at "$filled" "$w")${SUB[rem]}"; ((filled++)); fi
-  s+="$C_GRY"
-  for ((i=filled;i<w;i++)); do s+="─"; done
-  printf '%s%s' "$s" "$C_RST"
+# Idempotent: runs on INT/TERM/HUP, on EXIT, and explicitly at the end.
+CLEANED=""
+cleanup() {
+  [ -n "$CLEANED" ] && return; CLEANED=1
+  [ -n "$SUDO_KEEPER" ] && kill "$SUDO_KEEPER" 2>/dev/null
+  [ -n "$WRAP_DIR" ] && rm -rf "$WRAP_DIR" 2>/dev/null
+  [ -n "$LOCKDIR" ] && rm -rf "$LOCKDIR" 2>/dev/null
+  [ -n "${UT_LASTREPORT:-}" ] && rm -f "$UT_LASTREPORT" 2>/dev/null
+  [ -n "${UT_REPORT_DIR:-}" ] && rm -rf "$UT_REPORT_DIR" 2>/dev/null
+  SUDO_PW=""
+  rm -f "$UT_WEB_DATA" 2>/dev/null
+  # The log is scratch space for the dashboard, not an artefact — unless --debug.
+  [ "${DEBUG:-0}" = "1" ] || rm -f "$LOG" 2>/dev/null
+  ut_web_stop
 }
+trap 'cleanup; echo; echo "Interrupted. Full log: '"$LOG"'"; exit 130' INT TERM
+trap 'cleanup' EXIT
+# Closing the terminal sends SIGHUP: end the run and take the current step's
+# process tree with it — brew ignores HUP (we set that), so it would otherwise be
+# left orphaned, parked on a password prompt nobody can answer.
+trap '[ -n "${CUR_PID:-}" ] && kill_tree "$CUR_PID"; cleanup; exit 129' HUP
 
-# wordmark <text> — letters swept through the brand gradient, letter-spaced.
-wordmark() {
-  # bash 3.2 expands every word of a `local` before assigning any of them, so n
-  # must not reference t on the same line (macOS ships bash 3.2).
-  local t="$1"
-  local n=${#t} i ch s=""
-  for ((i=0;i<n;i++)); do
-    ch="${t:i:1}"
-    s+="$(grad_at "$i" "$n")$C_B$ch$C_RST"
-    (( i < n-1 )) && s+=" "
-  done
-  printf '%s' "$s"
-}
-
-# pill <color> <text> — a small filled badge used for counters and hints.
-pill() { printf '%s%s %s %s' "$C_BADGE" "$1" "$2" "$C_RST"; }
-
-# rule <width> — a hairline that fades out along the brand gradient.
-rule() {
-  local w=$1 i s=""
-  for ((i=0;i<w;i++)); do s+="$(grad_at "$i" "$w")─"; done
-  printf '%s%s' "$s" "$C_RST"
-}
-
-# draw_box <title> [subtitle] — a self-closing rounded box with a teal border.
-# Width is fixed and each text line is centered by measured length, so the right
-# edge always lines up. A subtitle, when given, renders dim under the title.
-draw_box() {
-  local title="$1" subtitle="${2:-}" W=52 dash i pad
-  dash=""; for ((i=0;i<W;i++)); do dash+="─"; done
-  printf '%s╭%s╮%s\n' "$C_GRY" "$dash" "$C_RST"
-  pad=$(( W - ${#title} - 3 )); (( pad < 0 )) && pad=0
-  printf '%s│%s  %s%s%s%*s%s│%s\n' "$C_GRY" "$C_RST" "$C_B$C_TXT" "$title" "$C_RST" "$pad" "" "$C_GRY" "$C_RST"
-  if [ -n "$subtitle" ]; then
-    pad=$(( W - ${#subtitle} - 3 )); (( pad < 0 )) && pad=0
-    printf '%s│%s  %s%s%s%*s%s│%s\n' "$C_GRY" "$C_RST" "$C_FNT" "$subtitle" "$C_RST" "$pad" "" "$C_GRY" "$C_RST"
-  fi
-  printf '%s╰%s╯%s\n' "$C_GRY" "$dash" "$C_RST"
-}
-
-# A mid-run password prompt, rendered as the dashboard footer so it appears IN
-# the dashboard (where the live tail sits) instead of tearing the alternate
-# screen down. No trailing newline on the prompt line so the (silent) cursor
-# sits just after it.
-prompt_footer() {
-  local ptext="${1:-Password:}"
-  printf '\n   %s%s\n\n   %s %s%s ' \
-    "$(rule 60)" "$C_RST" \
-    "$(pill "$C_YEL" "SUDO")" "$C_B$C_TXT" "$ptext"
-}
-
-# Prime sudo before entering the alternate screen. Some casks (e.g. Stats)
-# register privileged launchctl helpers that brew removes via sudo; without a
-# cached ticket the subprocess blocks silently while the dashboard renders over it.
+# Prime sudo before the run so a step doesn't stall on a hidden prompt.
 #
-# The password is read by us (bounded `read -t`), not by sudo itself: a bare
-# `sudo -v` blocks on its own tty read, and bash defers traps until the foreground
-# command returns — so closing the window left this process immortal, still
-# holding the terminal and later painting over the next run's dashboard.
+# The password is read here with a bounded `read -t`, not by `sudo -v` itself: a
+# bare `sudo -v` blocks on its own tty read, and bash defers traps until the
+# foreground command returns — so closing the window left an immortal process.
 sudo_prime() {
   sudo -n true 2>/dev/null && return 0
-  printf '\n%s\n\n' "$(draw_box "sudo · password required")"
-  local i pw
+  local i
   for i in 1 2 3; do
-    printf '   %sPassword:%s ' "$C_B$C_YEL" "$C_RST"
-    if ! IFS= read -rs -t "${PROMPT_TIMEOUT:-300}" pw </dev/tty; then
-      printf '\n   %sno password entered — continuing without a sudo ticket%s\n\n' "$C_FNT" "$C_RST"
-      return 1
-    fi
-    echo
-    if printf '%s\n' "$pw" | sudo -S -v 2>/dev/null; then
-      unset pw; echo; return 0
-    fi
-    printf '   %sSorry, try again.%s\n' "$C_RED" "$C_RST"
+    ut_web_ask "$([ "$i" = 1 ] && echo 'Password' || echo 'Wrong password — try again')" force || return 1
+    if sudo -S -v < "$PROMPT_REP" 2>/dev/null; then rm -f "$PROMPT_REP"; return 0; fi
+    SUDO_PW=""            # it was wrong: don't reuse it for the steps
+    rm -f "$PROMPT_REP"
   done
-  unset pw
-  printf '\n   %scontinuing without a sudo ticket%s\n\n' "$C_FNT" "$C_RST"
   return 1
 }
 
-# render_body <running_idx> <show_banner> <first_step> <last_step>
-# Emits the frame; render() sizes it to the window before printing.
-render_body() {
-  local running_idx="${1:-} "
-  local show_header="${2:-1}" first="${3:-0}" last="${4:-$((TOTAL-1))}"
-  local frame_char="${SPIN:FRAME%${#SPIN}:1}"
-  local cols; cols=$(tput cols 2>/dev/null || echo 80)
-  local W=$(( cols - 4 )); (( W > 96 )) && W=96; (( W < 40 )) && W=40
-  # The step list keeps a tighter measure than the header rule, so the duration
-  # column sits near the text instead of drifting to the far edge of a wide window.
-  local LW=$W; (( LW > 74 )) && LW=74
-  local PAD="  "
-
-  local fin=0 done_n=0 skip_n=0 fail_n=0 i
+# ===========================================================================
+# Run
+# ===========================================================================
+run_web() {
+  T0=$SECONDS
+  LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
+  : > "$LOG"
+  STATUS=(); STEP_T0=(); STEP_SEC=(); STEP_SLUG=(); STEP_IMG=()
+  local i label name
+  local site
   for ((i=0;i<TOTAL;i++)); do
-    case "${STATUS[i]}" in
-      done) done_n=$((done_n+1)); fin=$((fin+1)) ;;
-      skip) skip_n=$((skip_n+1)); fin=$((fin+1)) ;;
-      fail) fail_n=$((fail_n+1)); fin=$((fin+1)) ;;
-    esac
-  done
-  local pct=$(( TOTAL>0 ? fin*100/TOTAL : 0 ))
-  local elapsed; elapsed="$(fmt_time $((SECONDS-T0)))"
-
-  # ── header: gradient wordmark left, clock right ──────────────────────────
-  if [ "$show_header" = 1 ]; then
-    local mark="UPDATETOOLS"
-    local markw=$(( ${#mark} * 2 - 1 ))   # letter-spaced wordmark width
-    local sub="keeping your Mac fresh"
-    local right="⏱ ${elapsed}"
-    local gap=$(( W - markw - 3 - ${#sub} - ${#right} - 1 ))
-    (( gap < 1 )) && gap=1
-    printf '%s%s   %s%s%s%*s%s%s%s\n' \
-      "$PAD" "$(wordmark "$mark")" "$C_GRY" "$sub" "$C_RST" "$gap" "" "$C_FNT" "$right" "$C_RST"
-    printf '%s%s\n\n' "$PAD" "$(rule "$W")"
-  fi
-
-  # ── progress: sub-cell gradient bar, percent, counters — all on one line ─
-  local bw=26; (( W < 76 )) && bw=$(( W - 46 )); (( bw < 10 )) && bw=10
-  printf '%s%s  %s%d%%%s  %s%d%s%s/%d%s   %s %s %s\n\n' \
-    "$PAD" "$(bar "$fin" "$TOTAL" "$bw")" \
-    "$C_B$C_TXT" "$pct" "$C_RST" \
-    "$C_TXT" "$fin" "$C_RST" "$C_GRY" "$TOTAL" "$C_RST" \
-    "$(pill "$C_GRN" "✓ $done_n")" "$(pill "$C_GRY" "· $skip_n")" "$(pill "$C_RED" "✗ $fail_n")"
-
-  # ── steps: a timeline rail, tool column, action, duration right-aligned ──
-  (( first > 0 )) && printf '%s%s│   ↑ %d more%s\n' "$PAD" "$C_GRY" "$first" "$C_RST"
-  local NAMEW=16 RAIL
-  for ((i=first;i<=last;i++)); do
-    local label="${STEPS[i]%%¦*}" name action
-    name="$label"; action=""
-    if [[ "$label" == *" · "* ]]; then name="${label%% · *}"; action="${label#* · }"; fi
-    (( ${#name} > NAMEW )) && name="${name:0:NAMEW}"
-
-    local icon color took="" namec="$C_TXT" actc="$C_FNT"
-    case "${STATUS[i]}" in
-      done) icon="✓"; color="$C_GRN" ;;
-      skip) icon="·"; color="$C_GRY"; namec="$C_GRY"; actc="$C_GRY" ;;
-      fail) icon="✗"; color="$C_RED"; namec="$C_RED" ;;
-      run)  icon="$frame_char"; color="$C_YEL"; namec="$C_B$C_TXT"; actc="$C_TXT" ;;
-      *)    icon="○"; color="$C_GRY"; namec="$C_GRY"; actc="$C_GRY" ;;
-    esac
-    [ -n "${STEP_SEC[i]:-}" ] && took="${STEP_SEC[i]}s"
-    [ "${STATUS[i]}" = run ] && took="$(fmt_time $(( SECONDS - ${STEP_T0[i]:-$SECONDS} )))"
-
-    # rail: a continuous line down the left edge, with the active step marked
-    RAIL="│ "
-    (( i == 0 )) && RAIL="╭ "
-    (( i == TOTAL-1 )) && RAIL="╰ "
-    [ "${STATUS[i]}" = run ] && RAIL="┃ "
-
-    # right-align the duration: rail(2) + icon(1) + 2 + NAMEW + 2 + action + gap
-    local used=$(( 2 + 3 + NAMEW + 2 + ${#action} )) gap
-    gap=$(( LW - used - ${#took} )); (( gap < 1 )) && gap=1
-
-    if [ "${STATUS[i]}" = run ]; then
-      # the active row carries a wash and a brighter rail, so the eye lands on it
-      printf '%s%s%s%s%s%s%s  %s%-*s%s  %s%s%s%*s%s%s%s\n' \
-        "$PAD" "$C_YEL" "$RAIL" "$C_RST$C_ROW" "$color" "$icon" "$C_RST$C_ROW" \
-        "$namec" "$NAMEW" "$name" "$C_RST$C_ROW" \
-        "$actc" "$action" "$C_RST$C_ROW" "$gap" "" "$C_FNT" "$took" "$C_RST"
-      # live output belongs to this step — show it right underneath, not adrift
-      if [ -z "${FOOTER:-}" ]; then
-        local tail_line
-        tail_line=$(tail -n 1 "$LOG" 2>/dev/null | tr -d '\r' \
-          | LC_ALL=C sed $'s/\033\\[[0-9;?]*[a-zA-Z]//g; s/\033[]P^_][^\a]*\a//g' \
-          | cut -c1-$((W-12)))
-        printf '%s%s│    ╰ %s%s%s\n' "$PAD" "$C_GRY" "$C_FNT" "$tail_line" "$C_RST"
-      fi
-    else
-      printf '%s%s%s%s%s%s  %s%-*s%s  %s%s%s%*s%s%s%s\n' \
-        "$PAD" "$C_GRY" "$RAIL" "$color" "$icon" "$C_RST" \
-        "$namec" "$NAMEW" "$name" "$C_RST" \
-        "$actc" "$action" "$C_RST" "$gap" "" "$C_GRY" "$took" "$C_RST"
+    STATUS[i]="pending"
+    label="${STEPS[i]%%¦*}"; name="${label%% · *}"
+    STEP_SLUG[i]="$(ut_icon_slug "$name")"
+    STEP_IMG[i]=""
+    if [ -z "${STEP_SLUG[i]}" ]; then
+      site="$(ut_icon_site "$name")"
+      [ -n "$site" ] && STEP_IMG[i]="$(ut_icon_datauri "$site" 2>/dev/null || true)"
     fi
   done
-  (( last < TOTAL-1 )) && printf '%s%s│   ↓ %d more%s\n' "$PAD" "$C_GRY" "$((TOTAL-1-last))" "$C_RST"
 
-  # ── footer: the pinned block (final summary, or the password prompt) ─────
-  [ -n "${FOOTER:-}" ] && printf '%s\n' "$FOOTER"
-}
+  # A normal run leaves nothing behind: the dashboard IS the output. The HTML
+  # report is still generated — it's where the version diff comes from — but into
+  # the served temp dir, and the log is removed at the end. --debug keeps both.
+  OPEN_REPORT=0; export OPEN_REPORT
 
-# Fit the frame to the window, then paint it in one write.
-#
-# A frame taller than the terminal is what made the dashboard scroll forever:
-# '\033[H\033[J' only clears the visible region, so every extra line pushed the
-# previous frame into the scrollback (iTerm keeps alt-screen scrollback by
-# default). So: drop the banner first, then window the step list around the
-# running step, and never emit a trailing newline on the last line.
-render() {
-  local running_idx="${1:-}"
-  local lines; lines=$(tput lines 2>/dev/null || echo 24)
-  local avail=$(( lines - 1 ))
-  (( avail < 3 )) && avail=3
 
-  # footer height: pinned block (its own line count) or the live tail (blank + line)
-  local footer_h=0 nl
-  if [ -n "${FOOTER:-}" ]; then
-    nl="${FOOTER//[!$'\n']/}"; footer_h=$(( ${#nl} + 1 ))
-  elif [ -n "$running_idx" ]; then
-    footer_h=1        # the live tail renders inside the list, under the active step
-  fi
-
-  local banner_h=3 progress_h=3 show_banner=1
-  (( banner_h + progress_h + TOTAL + footer_h > avail )) && { show_banner=0; banner_h=0; }
-
-  local room=$(( avail - banner_h - progress_h - footer_h ))
-  local first=0 last=$(( TOTAL - 1 ))
-  if (( room < TOTAL )); then
-    (( room < 1 )) && room=1
-    # window the list around the running step, leaving a row for each "N more" hint
-    local focus="${running_idx:-${CUR_STEP:-0}}" span=$room
-    (( first > 0 || TOTAL > room )) && span=$(( room - 1 ))
-    (( span < 1 )) && span=1
-    first=$(( focus - span / 2 ))
-    (( first < 0 )) && first=0
-    last=$(( first + span - 1 ))
-    if (( last > TOTAL - 1 )); then last=$(( TOTAL - 1 )); first=$(( last - span + 1 )); fi
-    (( first < 0 )) && first=0
-  fi
-
-  local body
-  body="$(render_body "$running_idx" "$show_banner" "$first" "$last" | head -n "$avail")"
-  printf '\033[H\033[J%s' "$body"
-}
-
-# ---------------------------------------------------------------------------
-# Main loop
-# ---------------------------------------------------------------------------
 # Create an askpass helper so SSH, Git, and sudo -A prompts from background
 # steps get routed through the dashboard instead of blocking on /dev/tty.
 # The helper writes the prompt text to a request file and waits for the run loop
@@ -1807,180 +2434,116 @@ export SSH_ASKPASS_REQUIRE="force"
 export GIT_ASKPASS="${WRAP_DIR}/askpass"
 export GIT_TERMINAL_PROMPT=0
 
-sudo_prime || true
-( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
-SUDO_KEEPER=$!
+  if ! ut_web_start; then
+    echo "Could not start the local dashboard (python3 missing?) — running plain." >&2
+    run_plain
+    return
+  fi
+  # The report lands inside the served dir unless we're keeping it.
+  [ "${DEBUG:-0}" = "1" ] || UT_REPORT_OUT="$WEB_DIR/report.html"
+  export UT_REPORT_OUT
+  # The dashboard is the entire UI: the terminal says nothing unless it must
+  # (browser wouldn't open, or --debug wants the artefact paths).
+  [ "${WEB_OPENED:-0}" = "1" ] || printf 'updatetools dashboard: %s\n' "$WEB_URL"
+  [ "${DEBUG:-0}" = "1" ] && printf 'log: %s\n' "$LOG"
 
-# Alternate screen + hidden cursor. Fall back to the raw ANSI sequences when
-# terminfo has no smcup/civis, so the dashboard never paints over the scrollback.
-tput smcup 2>/dev/null || printf '\033[?1049h'
-tput civis 2>/dev/null || printf '\033[?25l'
-# Disable auto-wrap (DECAWM) for the dashboard. A line one column too wide would
-# otherwise wrap, scroll the frame, and — since iTerm2 saves alt-screen lines to
-# scrollback by default (KEY_SCROLLBACK_IN_ALTERNATE_SCREEN defaults to YES) —
-# every frame would pile up in the history instead of being overwritten in place.
-# Terminal.app follows xterm and discards those lines, which is why it looked fine.
-printf '\033[?7l'
-ALT_ON=1     # from here on, leaving means restoring the normal screen
 
-for ((i=0;i<TOTAL;i++)); do
-  CUR_STEP=$i
-  entry="${STEPS[i]}"
-  guard="${entry#*¦}"; guard="${guard%%¦*}"
-  cmd="${entry##*¦}"
 
-  if ! eval "$guard" >/dev/null 2>&1; then
-    STATUS[i]="skip"; render; continue
+  sudo_prime || true
+  ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
+  SUDO_KEEPER=$!
+
+  local entry guard cmd pid rc stalled last_size last_change size prompt reply
+  for ((i=0;i<TOTAL;i++)); do
+    CUR_STEP=$i
+    entry="${STEPS[i]}"
+    guard="${entry#*¦}"; guard="${guard%%¦*}"
+    cmd="${entry##*¦}"
+
+    if ! eval "$guard" >/dev/null 2>&1; then
+      STATUS[i]="skip"; ut_web_state run; continue
+    fi
+
+    STATUS[i]="run"
+    STEP_T0[i]=$SECONDS
+    ut_web_state run
+    rm -f "$PROMPT_REQ" "$PROMPT_REP"
+    sudo -n -v 2>/dev/null || true
+    {
+      # Detach the step from our controlling terminal so an askpass prompt can't
+      # deliver SIGHUP/SIGTTIN to brew's process group mid-upgrade.
+      trap '' HUP TTIN TTOU
+      echo; echo "######## ${entry%%¦*} ########"
+      eval "$cmd"
+    } >>"$LOG" 2>&1 </dev/null &
+    pid=$!
+    CUR_PID=$pid
+
+    last_size=$(wc -c < "$LOG" 2>/dev/null); last_size=${last_size// /}
+    last_change=$SECONDS
+    stalled=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+      # A password request surfaces in the dashboard, not here.
+      if [ -f "$PROMPT_REQ" ]; then
+        prompt=$(cat "$PROMPT_REQ"); rm -f "$PROMPT_REQ"
+        if ut_web_ask "${prompt:-Password:}"; then
+          last_change=$SECONDS      # don't penalise time spent waiting on the user
+        else
+          kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+          echo "######## no password entered within ${PROMPT_TIMEOUT}s — step aborted ########" >> "$LOG"
+          stalled=1
+          break
+        fi
+      fi
+
+      # Stall watchdog: no new output for STALL_TIMEOUT seconds => wedged.
+      if [ "${STALL_TIMEOUT:-0}" -gt 0 ] 2>/dev/null; then
+        size=$(wc -c < "$LOG" 2>/dev/null); size=${size// /}
+        if [ "$size" != "$last_size" ]; then
+          last_size=$size; last_change=$SECONDS
+        elif [ $(( SECONDS - last_change )) -ge "$STALL_TIMEOUT" ]; then
+          kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+          echo "######## stalled ${STALL_TIMEOUT}s with no output — killed ########" >> "$LOG"
+          stalled=1
+          break
+        fi
+      fi
+
+      ut_web_state run
+      sleep 0.4
+    done
+    CUR_PID=""
+    wait "$pid" 2>/dev/null; rc=$?
+    STEP_SEC[i]=$(( SECONDS - ${STEP_T0[i]:-$SECONDS} ))
+    if [ "$stalled" = 1 ] || [ "$rc" -ne 0 ]; then STATUS[i]="fail"; else STATUS[i]="done"; fi
+    ut_web_state run
+  done
+
+  # ── after: counts, the version diff, where things landed ──────────────────
+  local done_n=0 skip_n=0 fail_n=0
+  for ((i=0;i<TOTAL;i++)); do
+    case "${STATUS[i]}" in
+      done) done_n=$((done_n+1)) ;;
+      skip) skip_n=$((skip_n+1)) ;;
+      fail) fail_n=$((fail_n+1)) ;;
+    esac
+  done
+  [ -r "${UT_LASTREPORT:-/nonexistent}" ] && UT_WEB_REPORT="$(cat "$UT_LASTREPORT" 2>/dev/null)"
+  [ -r "${UT_WEB_DATA:-/nonexistent}" ] && UT_WEB_UPDATES="$(ut_web_updates "$UT_WEB_DATA")"
+  ut_web_state done
+
+  if [ "${DEBUG:-0}" = "1" ]; then
+    [ -n "${UT_WEB_REPORT:-}" ] && printf 'report: %s\n' "$UT_WEB_REPORT"
+    printf 'log:    %s\n' "$LOG"
   fi
 
-  STATUS[i]="run"
-  STEP_T0[i]=$SECONDS
-  rm -f "$PROMPT_REQ" "$PROMPT_REP"
-  # Refresh the cached sudo ticket right before a step that may need root (e.g.
-  # brew removing a cask's launchctl service). -n never prompts; if the ticket
-  # lapsed, brew still falls back to the askpass prompt below.
-  sudo -n -v 2>/dev/null || true
-  {
-    # Detach the step from our controlling terminal. Without this, toggling
-    # the alternate screen / reading /dev/tty for an askpass prompt delivers
-    # SIGHUP (and SIGTTIN/SIGTTOU) to brew's process group — which crashed cask
-    # upgrades with "Error: SIGHUP" mid 'Removing launchctl service ...'. Ignored
-    # dispositions are inherited by brew's children (sudo, launchctl).
-    trap '' HUP TTIN TTOU
-    echo; echo "######## ${entry%%¦*} ########";
-    eval "$cmd";
-  } >>"$LOG" 2>&1 </dev/null &
-  pid=$!
-  CUR_PID=$pid
-
-  # Watchdog state: track log growth to detect a wedged step.
-  last_size=$(wc -c < "$LOG" 2>/dev/null); last_size=${last_size// /}
-  last_change=$SECONDS
-  stalled=0
-
-  while kill -0 "$pid" 2>/dev/null; do
-    if [ -f "$PROMPT_REQ" ]; then
-      prompt=$(cat "$PROMPT_REQ"); rm -f "$PROMPT_REQ"
-      # Prompt IN the dashboard — pin the password box as the footer (where the
-      # live tail renders) instead of dropping the alternate screen. Reads
-      # silently from the tty, exactly like the initial `sudo -v` prompt.
-      FOOTER="$(prompt_footer "$prompt")"
-      render "$i"
-      tput cnorm 2>/dev/null            # show cursor while typing
-      read_args=(-rs)
-      [ "${PROMPT_TIMEOUT:-0}" -gt 0 ] 2>/dev/null && read_args+=(-t "$PROMPT_TIMEOUT")
-      if IFS= read "${read_args[@]}" reply </dev/tty; then
-        printf '%s\n' "$reply" > "$PROMPT_REP"
-        tput civis 2>/dev/null
-        FOOTER=""
-        last_change=$SECONDS   # don't penalise time spent waiting on the user
-      else
-        # No input within PROMPT_TIMEOUT — abort the step cleanly so an
-        # unattended run keeps going instead of blocking forever on the prompt.
-        kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
-        echo "######## no password entered within ${PROMPT_TIMEOUT}s — step aborted ########" >> "$LOG"
-        tput civis 2>/dev/null
-        FOOTER=""
-        stalled=1
-        break
-      fi
-    fi
-
-    # Stall watchdog: no new output for STALL_TIMEOUT seconds => wedged.
-    if [ "${STALL_TIMEOUT:-0}" -gt 0 ] 2>/dev/null; then
-      size=$(wc -c < "$LOG" 2>/dev/null); size=${size// /}
-      if [ "$size" != "$last_size" ]; then
-        last_size=$size; last_change=$SECONDS
-      elif [ $(( SECONDS - last_change )) -ge "$STALL_TIMEOUT" ]; then
-        kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
-        echo "######## stalled ${STALL_TIMEOUT}s with no output — killed ########" >> "$LOG"
-        stalled=1
-        break
-      fi
-    fi
-
-    FRAME=$((FRAME+1))
-    # ~every 2s: has the terminal gone away? (cheap open/close, not every frame)
-    (( FRAME % 16 == 0 )) && tty_gone && abort_no_tty
-    render "$i"
-    sleep 0.12
-  done
-  CUR_PID=""
-  wait "$pid" 2>/dev/null; rc=$?
-  STEP_SEC[i]=$(( SECONDS - ${STEP_T0[i]:-$SECONDS} ))
-  if [ "$stalled" = 1 ] || [ "$rc" -ne 0 ]; then STATUS[i]="fail"; else STATUS[i]="done"; fi
-  render
-done
-
-# ---------------------------------------------------------------------------
-# Summary — computed while still on the dashboard (alternate screen)
-# ---------------------------------------------------------------------------
-done_n=0 skip_n=0 fail_n=0
-for ((i=0;i<TOTAL;i++)); do
-  case "${STATUS[i]}" in
-    done) done_n=$((done_n+1)) ;;
-    skip) skip_n=$((skip_n+1)) ;;
-    fail) fail_n=$((fail_n+1)) ;;
-  esac
-done
-ELAPSED="$(fmt_time $((SECONDS-T0)))"
-
-# Build the in-dashboard summary footer: a hairline, one headline, then facts.
-SUMW=$(( $(tput cols 2>/dev/null || echo 80) - 4 )); (( SUMW > 96 )) && SUMW=96
-printf -v FOOTER '\n  %s\n\n  %sall done%s  %s·%s  %s%s elapsed%s\n\n  %s %s %s\n' \
-  "$(rule "$SUMW")" \
-  "$C_B$C_TXT" "$C_RST" "$C_GRY" "$C_RST" "$C_FNT" "$ELAPSED" "$C_RST" \
-  "$(pill "$C_GRN" "✓ $done_n updated")" "$(pill "$C_GRY" "· $skip_n skipped")" "$(pill "$C_RED" "✗ $fail_n failed")"
-if [ "$fail_n" -gt 0 ]; then
-  FOOTER+=$'\n'"  ${C_RED}failed${C_RST}"$'\n'
-  for ((i=0;i<TOTAL;i++)); do
-    [ "${STATUS[i]}" = fail ] && FOOTER+="    ${C_RED}✗${C_RST} ${C_FNT}${STEPS[i]%%¦*}${C_RST}"$'\n'
-  done
-fi
-# Report path, recorded by the "save to Desktop" step (in a subshell) via a file
-# keyed on $$ — read it back here so the summary can show where it landed.
-REPORT_PATH=""
-if [ "${MAKE_REPORT:-1}" = "1" ] && [ -r "${UT_LASTREPORT:-/nonexistent}" ]; then
-  REPORT_PATH="$(cat "$UT_LASTREPORT" 2>/dev/null)"
-fi
-[ -n "$REPORT_PATH" ] && FOOTER+=$'\n'"  ${C_GRY}report${C_RST}  ${C_FNT}${REPORT_PATH}${C_RST}"
-FOOTER+=$'\n'"  ${C_GRY}log${C_RST}     ${C_FNT}${LOG}${C_RST}"
-FOOTER+=$'\n\n'"  $(pill "$C_YEL" "q")${C_GRY} quit${C_RST}"
-
-# Render the final summary screen and wait for 'q' (Ctrl-C also exits via trap).
-render
-if [ -r /dev/tty ]; then
-  key=""
-  while IFS= read -rsn1 key 2>/dev/null </dev/tty; do
-    case "$key" in q|Q) break ;; esac
-  done
-fi
-
-cleanup
-
-# ---------------------------------------------------------------------------
-# Also echo the summary on the normal screen (persists in scrollback)
-# ---------------------------------------------------------------------------
-echo
-printf '%s  %sall done%s in %s\n' "$(wordmark UPDATETOOLS)" "$C_B$C_TXT" "$C_RST" "$ELAPSED"
-printf '%s %s %s\n' \
-  "$(pill "$C_GRN" "✓ $done_n updated")" "$(pill "$C_GRY" "· $skip_n skipped")" "$(pill "$C_RED" "✗ $fail_n failed")"
-if [ "$fail_n" -gt 0 ]; then
-  echo
-  echo "Failed steps:"
-  for ((i=0;i<TOTAL;i++)); do
-    [ "${STATUS[i]}" = fail ] && printf '   %s✗%s %s\n' "$C_RED" "$C_RST" "${STEPS[i]%%¦*}"
-  done
-fi
-echo
-[ -n "${REPORT_PATH:-}" ] && echo "Report:   $REPORT_PATH"
-echo "Full log: $LOG"
-
+  # No key to press: the page owns the session now. The server exits when the tab
+  # is closed (polling stops) or Close is pressed, and this run ends with it.
+  wait "$WEB_PID" 2>/dev/null
+  ut_web_stop
 }
 
-# ===========================================================================
-# Plain text run
-# ===========================================================================
 run_plain() {
 # ---------------------------------------------------------------------------
 # Helpers
@@ -2290,9 +2853,10 @@ else
 fi
 
 
-# The dashboard needs a terminal to draw on; everything else gets plain output.
-if [ "$PLAIN" != "1" ] && [ -t 1 ]; then
-  run_dashboard
+# The browser dashboard needs a terminal to ask for the sudo password on;
+# anything non-interactive gets plain output.
+if [ "$PLAIN" != "1" ] && [ -t 1 ] && [ -t 0 ]; then
+  run_web
 else
   run_plain
 fi

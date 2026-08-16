@@ -2,22 +2,17 @@
 
 One command to update **everything updatable** on your Mac — Homebrew, language
 package managers, global CLIs, editor extensions, and (optionally) macOS itself —
-plus an animated full-screen dashboard to watch while it runs. It's a **single
-script** with no companion files.
+plus a live dashboard that opens in your browser. It's a **single script** with
+no companion files, and it leaves nothing on disk.
 
 ```
-  U P D A T E T O O L S   keeping your Mac fresh                      ⏱ 03:41
-  ────────────────────────────────────────────────────────────────────────────
-
-  ██████────────────────────  23%  4/17    ✓ 3   · 1   ✗ 0
-
-  ╭ ✓  Homebrew          update index                                     1s
-  │ ✓  Report            scan versions                                    3s
-  │ ✓  Homebrew          upgrade formulae                                42s
-  ┃ ⢿  Homebrew          upgrade casks                                 01:13
-  │    ╰ ==> Fetching downloads for: android-studio
-  │ ○  npm               global packages
-  ╰ ○  Report            save to Desktop
+updatetools                                    04:12   ✓ 12 done  · 3 skipped  ✗ 0 failed
+─────────────────────────────────────────────────────────────────────────────────────────
+●  Homebrew   update index                                                             1s
+●  Homebrew   upgrade formulae                                                        42s
+◐  Homebrew   upgrade casks                                                         01:13
+   ==> Fetching downloads for: android-studio
+○  npm        global packages
 ```
 
 ## What it does
@@ -61,8 +56,8 @@ install -m 755 updatetools ~/.local/bin/
 ## Usage
 
 ```bash
-updatetools                 # animated dashboard (default, on a terminal)
-updatetools --plain         # plain scrolling text output (no dashboard)
+updatetools                 # live dashboard in your browser (default)
+updatetools --plain         # plain scrolling text output, no browser
 updatetools --macos         # ALSO install macOS + App Store updates (may reboot!)
 updatetools --plain --macos
 updatetools --no-greedy     # don't force-upgrade self-managing casks
@@ -78,12 +73,11 @@ without any flag.
 | Flag | Effect |
 |------|--------|
 | `--plain` | Force plain scrolling output instead of the dashboard. |
-| `--dashboard` | Force the dashboard (default; useful only to override `PLAIN=1`). |
+| `--web` | Force the dashboard (default; useful only to override `PLAIN=1`). |
+| `--debug`, `--keep` | Keep the run log and write the HTML report to the Desktop. |
 | `--macos`, `--all` | Install macOS **and** Mac App Store updates. Off by default. |
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
 | `--no-close` | Never close running apps — stage every cask upgrade with `--no-quit`. |
-| `--no-report` | Don't write the HTML report to the Desktop. |
-| `--no-open` | Write the report but don't open it in a browser. |
 
 ### Environment toggles
 
@@ -93,8 +87,7 @@ without any flag.
 | `MACOS_UPDATES=1` | `--macos` |
 | `GREEDY=0` | `--no-greedy` |
 | `CLOSE_APPS=0` | `--no-close` |
-| `MAKE_REPORT=0` | `--no-report` |
-| `OPEN_REPORT=0` | `--no-open` |
+| `DEBUG=1` | `--debug` |
 | `UPDATETOOLS_CLOSE="a b"` | Force-close these cask apps to upgrade them now (space/comma list of tokens). |
 | `UPDATETOOLS_PROTECT="a b"` | Never close these cask apps. |
 | `BREW_CASK_SKIP="a b"` | Casks needing an interactive sudo password — kept out of the run and reported for manual upgrade (default `stats aldente`). |
@@ -130,27 +123,15 @@ apps you explicitly force with **`UPDATETOOLS_CLOSE`**. Nothing is ever
 force-killed: if a graceful quit doesn't complete (e.g. a save dialog appears),
 the cask falls back to staging. Pass `--no-close` to disable closing entirely.
 
-## The Desktop report
+## The report
 
-After every run, `updatetools` writes a self-contained HTML report to
-`~/Desktop/updatetools-report-<timestamp>.html` and (on a terminal) opens it. It
-lists each tool that actually changed version this run as a card:
-
-```
-Vercel CLI      39.0.0  →  39.1.2      View changelog ↗
-Claude Code      1.2.3  →  1.3.0       View changelog ↗
-```
-
-Versions come from a snapshot taken right after `brew update` (so `old → new` is
-accurate) diffed against the post-run state; changelog links are a curated,
-manually-maintained map. Disable with `--no-report`, or keep it but don't
-auto-open with `--no-open`.
-
-The page is dark/light aware, works offline, and shows each tool with its own
-logo — bundled vector marks from [Simple Icons](https://simpleicons.org) (CC0),
+Every run diffs versions from before and after, and shows what actually changed
+— with each tool's logo (bundled [Simple Icons](https://simpleicons.org), CC0,
 falling back to the project's own site icon, cached under
-`~/.cache/updatetools/icons`. Tool names use the vendor's spelling as recorded by
-Homebrew (`ChatGPT`, `GitHub Copilot`), so the report reads like the products do.
+`~/.cache/updatetools/icons`) and the vendor's spelling from Homebrew's metadata,
+so it reads `ChatGPT`, not `chatgpt`. `--debug` also writes it to the Desktop as
+a self-contained HTML file.
+
 
 ## Why macOS updates are opt-in
 
@@ -161,43 +142,20 @@ them.
 
 ## The dashboard
 
-- A timeline rail down the left edge, with the active step marked and washed.
-- Sub-cell progress bar (⅛-cell resolution), percentage, counters, elapsed timer.
-- Per-step durations, and the live tail of the running step's output beneath it.
-- Status icons: `✓` done · `·` skipped · `✗` failed · `○` pending.
-- Uses the alternate screen buffer (like `htop`/`vim`) and restores the terminal
-  cleanly on exit or `Ctrl-C`.
-- Every frame is sized to fit the window and auto-wrap is disabled, so the
-  dashboard never scrolls itself into the scrollback (iTerm2 saves alternate-screen
-  lines by default, which turns any stray scroll into an endless ribbon).
-- Only one run at a time: a second launch refuses with the running PID, since two
-  dashboards would paint over each other and collide on Homebrew's download lock.
-- Closing the window ends the run and takes the current step's process tree with
-  it, instead of leaving an orphan parked on a password prompt.
-- Runs by default; uses plain text automatically when not attached to a TTY
-  (pipes, cron, CI), or when you pass `--plain`.
+The run has no terminal UI. It serves a page on `127.0.0.1` (random port), opens
+it in your default browser, and prints nothing. The page shows the plan before
+the run, live progress with per-step durations, and the version diff at the end;
+clicking a step opens that step's output. Passwords are asked for **in the page**
+— nothing is echoed as you type — and the answer goes straight to `sudo`.
 
-When all steps finish, the **summary is shown inside the dashboard** (counts,
-failed steps, log path) and it waits for you to **press `q`** to quit:
+Access is locked down: loopback only, a random per-run token exchanged for an
+`HttpOnly` cookie (everything else is `403`), a `Host` check against DNS
+rebinding, and the token handed to the server through a `0600` file rather than
+argv. Closing the tab ends the run's server, and with it the run.
 
-```
-  ────────────────────────────────────────────────────────────────────────────
+Nothing is left on disk: the log and the HTML report live in a temp dir that goes
+away when the run ends. Pass `--debug` to keep both.
 
-  all done  ·  12:34 elapsed
-
-   ✓ 14 updated   · 2 skipped   ✗ 1 failed
-
-  failed
-    ✗ Homebrew · upgrade casks
-
-  report  /Users/you/Desktop/updatetools-report-20260815.html
-  log     /var/folders/.../updatetools-39499.log
-
-   q  quit
-```
-
-The same summary is also echoed to the normal screen afterwards, so the log path
-stays in your scrollback.
 
 ## Notes & gotchas
 
