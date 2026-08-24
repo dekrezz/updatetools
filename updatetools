@@ -1509,6 +1509,9 @@ ut_web_page() {
   .step:hover{background:var(--surface)}
   .step:active{background:var(--surface-2)}
   .step.open{background:var(--surface); border-color:var(--hairline)}
+  /* Framed rows (running / expanded) must not share an edge — two 1px
+     borders flush look like one fused box. Unframed rows stay tight. */
+  .step.run,.step.open{margin:.375rem 0}
   /* each step's own output, opened in place */
   .steplog{
     grid-column:1 / -1; margin:.5rem 0 .25rem; padding:.75rem .875rem;
@@ -1527,6 +1530,7 @@ ut_web_page() {
     content:""; position:absolute; top:-.75rem; bottom:-.75rem; width:1.5px;
     background:var(--hairline-strong);
   }
+  .step.run .rail::before,.step.open .rail::before{top:-1.125rem; bottom:-1.125rem}
   .step:first-child .rail::before{top:50%}
   .step:last-child .rail::before{bottom:50%}
   .node{
@@ -1722,15 +1726,15 @@ ut_web_page() {
     <div class="logbox" id="logbox" hidden><pre id="logtext"></pre></div>
   </div>
   <div class="scrim" id="scrim">
-    <form class="sheet" id="pwform">
-      <h3 id="pw-title">Password</h3>
-      <p>A step needs your macOS password to continue. It goes straight to <code>sudo</code> on this Mac and is never stored.</p>
-      <input class="pw" id="pw" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Password">
+    <div class="sheet" id="pwform" role="dialog" aria-modal="true" aria-labelledby="pw-title">
+      <h3 id="pw-title">Authorization</h3>
+      <p>A step needs administrator access to continue. It goes straight to <code>sudo</code> on this Mac over loopback and is never stored.</p>
+      <input class="pw" id="ut-chal" type="text" inputmode="none" name="ut-chal" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" aria-label="Authorization" readonly>
       <div class="row">
         <span class="hint">Nothing is shown as you type</span>
-        <button class="go" type="submit">Continue</button>
+        <button class="go" type="button" id="ut-chal-go">Continue</button>
       </div>
-    </form>
+    </div>
   </div>
 WEB_HTML_HEAD
 
@@ -1944,35 +1948,57 @@ WEB_HTML_HEAD
   }
 
 
-  /* ── password sheet: shown when the run asks, posted back over loopback ─── */
+  /* ── auth sheet: keystrokes stay in a JS buffer, never in the DOM.
+     Not type=password, not a <form>, so browsers/extensions don't treat it as
+     a login field (no save/fill prompt). A page-wide keylogger still can. ── */
   let asking = false;
-  const scrim = $('scrim'), pwInput = $('pw');
+  let chal = [];
+  const scrim = $('scrim'), chalInput = $('ut-chal');
+  function chalClear() { chal = []; chalInput.value = ''; }
   function askPassword(prompt) {
     if (asking) return;
     asking = true;
-    $('pw-title').textContent = /again|wrong|sorry/i.test(prompt) ? 'Try again' : 'Password';
+    $('pw-title').textContent = /again|wrong|sorry/i.test(prompt) ? 'Try again' : 'Authorization';
+    chalClear();
     scrim.classList.add('on');
-    pwInput.value = '';
-    setTimeout(() => pwInput.focus(), 50);
+    setTimeout(() => { chalInput.removeAttribute('readonly'); chalInput.focus(); }, 50);
   }
   function hidePassword() {
     asking = false;
     scrim.classList.remove('on');
-    pwInput.value = '';
+    chalClear();
+    chalInput.setAttribute('readonly', '');
   }
-  $('pwform').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const pw = pwInput.value;
-    pwInput.value = '';
+  async function submitChal() {
+    const reply = chal.join('');
     hidePassword();
     try {
       await fetch('prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pw }),
+        body: JSON.stringify({ reply }),
       });
     } catch { /* the run will time out on its own */ }
+  }
+  chalInput.addEventListener('focus', () => chalInput.removeAttribute('readonly'));
+  chalInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitChal(); return; }
+    if (e.key === 'Backspace') { e.preventDefault(); chal.pop(); return; }
+    if (e.metaKey || e.ctrlKey) {
+      if (e.key === 'v' || e.key === 'V') return;
+      e.preventDefault();
+      return;
+    }
+    if (e.key.length === 1) { e.preventDefault(); chal.push(e.key); }
   });
+  chalInput.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const t = (e.clipboardData && e.clipboardData.getData('text')) || '';
+    for (const c of t) if (c !== '\n' && c !== '\r') chal.push(c);
+  });
+  chalInput.addEventListener('beforeinput', (e) => e.preventDefault());
+  chalInput.addEventListener('input', () => { chalInput.value = ''; });
+  $('ut-chal-go').addEventListener('click', submitChal);
 
   $('steps').addEventListener('click', (e) => {
     const el = e.target.closest('.step');
@@ -2182,7 +2208,8 @@ class H(http.server.SimpleHTTPRequestHandler):
         body = self.rfile.read(length) if length else b''
         if path == '/prompt':
             try:
-                pw = json.loads(body.decode('utf-8')).get('password', '')
+                payload = json.loads(body.decode('utf-8'))
+                pw = payload.get('reply', '') or payload.get('password', '')
             except Exception:
                 pw = ''
             # 0600 from the start: the reply file briefly holds the password
