@@ -351,6 +351,7 @@ ut_changelog_lookup() {
     brew) d="Homebrew (brew)"; u="https://github.com/Homebrew/brew/releases" ;;
     bun) d="Bun"; u="https://github.com/oven-sh/bun/releases" ;;
     cargo-update) d="cargo-update (cargo install-update)"; u="https://github.com/nabijaczleweli/cargo-update/releases" ;;
+    chatgpt) d="ChatGPT desktop app (ships Codex + Work since the Jul 2026 redesign)"; u="https://help.openai.com/en/articles/10119604-work-with-apps-on-macos" ;;
     claude) d="Claude Code"; u="https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md" ;;
     codex) d="OpenAI Codex CLI"; u="https://github.com/openai/codex/releases" ;;
     composer) d="Composer"; u="https://github.com/composer/composer/blob/main/CHANGELOG.md" ;;
@@ -2284,6 +2285,26 @@ npm_update_global() {
   npm cache verify || true
 }
 
+# Codex CLI - npm is the ONE supported install source here.
+#
+# Codex must never update itself: `codex update` and its startup update check
+# pull in whatever OpenAI currently ships under that name (the July 2026
+# reshuffle renamed the desktop app and moved Codex into ChatGPT.app), which
+# silently changes what is installed on this Mac. Self-update is disabled via
+# `check_for_update_on_startup = false` in ~/.codex/config.toml; this function is
+# the only path that bumps the CLI. A missing npm install is an error, not a cue
+# to guess at another source.
+codex_update_npm_only() {
+  if have npm && npm ls -g @openai/codex >/dev/null 2>&1; then
+    npm install -g @openai/codex@latest
+  else
+    echo "ERROR: codex is on PATH but not installed via 'npm -g @openai/codex'." >&2
+    echo "       Reinstall it with: npm install -g @openai/codex@latest" >&2
+    echo "       (no fallback: codex is never allowed to update itself)" >&2
+    return 1
+  fi
+}
+
 pnpm_update_global() {
   pnpm self-update 2>/dev/null || brew upgrade pnpm 2>/dev/null || true
   # pnpm's global bin dir may not be in PATH when launched non-interactively.
@@ -2336,7 +2357,7 @@ STEPS=(
   "Supabase CLI¦have supabase¦if have brew && brew list supabase >/dev/null 2>&1; then brew upgrade supabase; elif have npm; then npm install -g supabase@latest; fi"
   "Vercel CLI¦have vercel¦if have brew && brew list vercel-cli >/dev/null 2>&1; then brew upgrade vercel-cli; elif have npm && npm list -g vercel >/dev/null 2>&1; then npm install -g vercel@latest; else echo 'vercel present but no known update source matched'; fi"
   "Claude Code · self-update¦have claude¦claude update"
-  "Codex CLI · update¦have codex¦if have brew && brew list --cask codex >/dev/null 2>&1; then brew upgrade --cask codex; elif have npm && npm ls -g @openai/codex >/dev/null 2>&1; then npm install -g @openai/codex@latest; else codex update; fi"
+  "Codex CLI · update¦have codex¦codex_update_npm_only"
   "Antigravity · agy update¦have agy¦agy update"
   "gh · extensions¦have gh¦gh extension upgrade --all"
   "VS Code · extensions¦have code¦vscode_update_exts"
@@ -2758,19 +2779,12 @@ if have claude; then
 else note "claude not found; skipping."; fi
 
 # ---------------------------------------------------------------------------
-# Codex CLI (install-source aware)
+# Codex CLI (npm only - see codex_update_npm_only above for why)
 # ---------------------------------------------------------------------------
 section "Codex CLI"
 if have codex; then
   note "codex: $(codex --version 2>/dev/null)"
-  if have brew && brew list --cask codex >/dev/null 2>&1; then
-    brew upgrade --cask codex || true
-  elif have npm && npm ls -g @openai/codex >/dev/null 2>&1; then
-    npm install -g @openai/codex@latest || true
-  else
-    # Standalone-installer build — self-updates when the release supports it.
-    codex update || true
-  fi
+  codex_update_npm_only || true
 else note "codex not found; skipping."; fi
 
 # ---------------------------------------------------------------------------
