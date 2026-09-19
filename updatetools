@@ -1717,14 +1717,15 @@ ut_web_page() {
       box-shadow:inset 0 1px 0 rgba(255,255,255,.9), 0 28px 56px -22px rgba(16,20,40,.22);
     }
   }
-  .sheet-head{margin:0; display:flex; align-items:center; gap:.5rem}
+  .sheet-head{margin:0; display:flex; align-items:center; gap:.5rem; min-height:1.55rem}
   .sheet-head #pw-title{
-    font-size:1.35rem; font-weight:500; letter-spacing:-.02em; line-height:1.15;
+    display:flex; align-items:center; height:1.55rem;
+    font-size:1.35rem; font-weight:500; letter-spacing:-.02em; line-height:1;
   }
   .info{
-    appearance:none; width:1.25rem; height:1.25rem; padding:0;
+    appearance:none; width:1.55rem; height:1.55rem; padding:0;
     border:0; background:transparent; color:var(--text-3);
-    display:grid; place-items:center; cursor:default; flex:none;
+    display:grid; place-items:center; align-self:center; cursor:default; flex:none;
   }
   .info svg{width:1.1rem; height:1.1rem; display:block}
   .info:hover,.info:focus-visible{color:var(--text-2)}
@@ -1748,15 +1749,15 @@ ut_web_page() {
   .sheet:has(.info:hover) .info-tip,
   .sheet:has(.info:focus-visible) .info-tip,
   .sheet:has(.info.open) .info-tip{opacity:1; transform:none}
-  /* Hidden: classic asterisks. Revealed: the actual characters. */
+  /* Hidden: centered bullets. Revealed: the actual characters. */
   .pw-row{display:flex; align-items:center; gap:.65rem; margin-top:1.2rem}
   .pw-field{position:relative; flex:1; min-width:0}
   .pw{
-    width:100%; padding:.85rem 2.6rem .85rem 1rem; border-radius:14px;
+    width:100%; height:2.9rem; padding:0 2.6rem 0 1rem; border-radius:14px;
     font:inherit; border:1px solid rgba(255,255,255,.14);
     background:rgba(255,255,255,.08);
     color:var(--text); text-shadow:none; caret-color:var(--text);
-    -webkit-text-security:none; letter-spacing:.12em;
+    -webkit-text-security:none; line-height:2.9rem; letter-spacing:.18em;
   }
   .sheet.reveal .pw{letter-spacing:0}
   .pw::selection{background:transparent}
@@ -2164,7 +2165,7 @@ WEB_HTML_HEAD
 
 
   /* ── auth sheet: keystrokes stay in a JS buffer; while hidden, the DOM only
-     contains one asterisk per character.
+     contains one bullet per character.
      Not type=password, not a <form>, so browsers/extensions don't treat it as
      a login field (no save/fill prompt). A page-wide keylogger still can. ── */
   let asking = false;
@@ -2173,7 +2174,7 @@ WEB_HTML_HEAD
   let hideTimer = 0;
   const HIDE_AFTER = 120000;
   const scrim = $('scrim'), sheet = $('pwform'), chalInput = $('ut-chal'), eyeBtn = $('ut-chal-eye');
-  function paintChal() { chalInput.value = revealed ? chal.join('') : '*'.repeat(chal.length); }
+  function paintChal() { chalInput.value = revealed ? chal.join('') : '•'.repeat(chal.length); }
   function setRevealed(on) {
     revealed = on;
     sheet.classList.toggle('reveal', on);

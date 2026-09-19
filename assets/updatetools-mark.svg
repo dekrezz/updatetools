@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title">
+  <title id="title">updatetools</title>
+  <defs>
+    <linearGradient id="g" x1="20" y1="18" x2="100" y2="102" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7AA2FF"/>
+      <stop offset="1" stop-color="#67E8C4"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="100" height="100" rx="30" fill="#11151D"/>
+  <path d="M34 55a28 28 0 0 1 47-15l7 7" fill="none" stroke="url(#g)" stroke-width="9" stroke-linecap="round"/>
+  <path d="m88 31 1 17-17-1" fill="none" stroke="url(#g)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M86 65a28 28 0 0 1-47 15l-7-7" fill="none" stroke="url(#g)" stroke-width="9" stroke-linecap="round"/>
+  <path d="m32 89-1-17 17 1" fill="none" stroke="url(#g)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,19 +1,34 @@
-# updatetools
+<div align="center">
+  <img src="assets/updatetools-mark.svg" width="112" alt="updatetools logo">
 
-One command to update **everything updatable** on your Mac — Homebrew, language
-package managers, global CLIs, editor extensions, and (optionally) macOS itself —
-plus a live dashboard that opens in your browser. It's a **single script** with
-no companion files, and it leaves nothing on disk.
+  <h1>updatetools</h1>
 
-```
-updatetools                                    04:12   ✓ 12 done  · 3 skipped  ✗ 0 failed
-─────────────────────────────────────────────────────────────────────────────────────────
-●  Homebrew   update index                                                             1s
-●  Homebrew   upgrade formulae                                                        42s
-◐  Homebrew   upgrade casks                                                         01:13
-   ==> Fetching downloads for: android-studio
-○  npm        global packages
-```
+  <p><strong>One command to keep the tools on your Mac up to date.</strong></p>
+
+  <p>
+    Homebrew, global packages, developer CLIs and editor extensions — updated
+    from a private live dashboard, without interrupting your work.
+  </p>
+
+  <p>
+    <img alt="macOS" src="https://img.shields.io/badge/macOS-12%2B-11151D?logo=apple&logoColor=white">
+    <img alt="Bash" src="https://img.shields.io/badge/Bash-3.2%2B-4EAA25?logo=gnubash&logoColor=white">
+    <img alt="Homebrew" src="https://img.shields.io/badge/Homebrew-ready-FBB040?logo=homebrew&logoColor=11151D">
+    <img alt="Single script" src="https://img.shields.io/badge/install-single_script-7AA2FF">
+    <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-67E8C4">
+  </p>
+
+  <p>
+    <a href="#what-it-does">What it does</a> ·
+    <a href="#install">Install</a> ·
+    <a href="#usage">Usage</a> ·
+    <a href="#the-dashboard">Dashboard</a> ·
+    <a href="#the-report">Report</a> ·
+    <a href="#license">License</a>
+  </p>
+</div>
+
+---
 
 ## What it does
 
