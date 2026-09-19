@@ -488,6 +488,22 @@ ut_upgrade_casks_smart() {
   return 0
 }
 
+ut_update_homebrew_all() {
+  local rc=0
+  brew update || rc=1
+
+  # Keep this invisible in the dashboard: it is report bookkeeping, not a
+  # user-facing update step. It must happen after the index refresh and before
+  # any package changes.
+  ut_report_begin
+
+  HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1 brew upgrade || rc=1
+  ut_upgrade_casks_smart "$GREEDY_FLAG" || rc=1
+  brew autoremove || rc=1
+  brew cleanup -s || rc=1
+  return "$rc"
+}
+
 # ===========================================================================
 # Version report -> ~/Desktop/updatetools-report-*.html
 # ===========================================================================
@@ -842,6 +858,7 @@ ut_icon_slug() {
   local n
   n=$(printf '%s' "${1-}" | tr '[:upper:]' '[:lower:]')
   case "$n" in
+    report*)                          echo report ;;
     *homebrew*|brew*)                 echo homebrew ;;
     npm|*"npm "*|*" npm")             echo npm ;;
     pnpm*)                            echo pnpm ;;
@@ -1427,6 +1444,7 @@ ut_web_page() {
     color-scheme: light dark;
     --accent:#5C8CFF; --ok:#4ADE80; --warn:#FAB93A; --bad:#F87171;
     --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif;
+    --display:"Futura","Avenir Next","Gill Sans","Hiragino Sans","Helvetica Neue",sans-serif;
     --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
     --r:14px;
     --shadow:0 1px 2px rgba(0,0,0,.06), 0 8px 24px -12px rgba(0,0,0,.18);
@@ -1450,29 +1468,32 @@ ut_web_page() {
   html{-webkit-text-size-adjust:100%}
   body{
     margin:0; background:var(--bg); color:var(--text);
-    font:1rem/1.5 var(--sans); -webkit-font-smoothing:antialiased;
+    min-height:100vh; font:1rem/1.5 var(--display); -webkit-font-smoothing:antialiased;
     transition:background-color .4s ease, color .4s ease;
   }
-  .wrap{max-width:52rem; margin:0 auto; padding:0 1.5rem 6rem}
+  .wrap{
+    max-width:48rem; margin:0 auto; padding:3.5rem 1.5rem 6rem;
+    animation:app-in .5s cubic-bezier(.2,.8,.2,1) both;
+  }
+  @keyframes app-in{from{opacity:0;transform:translateY(8px)}}
 
-  .masthead{padding:4.5rem 0 2rem}
+  .masthead{padding:0 0 2rem; text-align:center}
   h1{
-    margin:0; font-size:clamp(2.25rem,1.5rem + 2.8vw,3.25rem); line-height:1;
-    letter-spacing:-.03em; font-weight:700; color:var(--text);
+    margin:0; font-size:clamp(1.75rem,1.4rem + 1.5vw,2.35rem); line-height:1;
+    letter-spacing:-.035em; font-weight:500; color:var(--text);
   }
   .meta{
-    margin:1.125rem 0 0; font-size:1rem; color:var(--text-2);
-    display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap;
+    margin:.75rem 0 0; font-size:.9375rem; color:var(--text-2);
+    display:flex; align-items:baseline; justify-content:center; gap:.5rem; flex-wrap:wrap;
   }
-  .meta strong{color:var(--text); font-weight:600; font-variant-numeric:tabular-nums}
+  .meta strong{color:var(--text); font-weight:500; font-variant-numeric:tabular-nums}
   .meta .sep{color:var(--text-3)}
   .meta .clock{font-variant-numeric:tabular-nums; letter-spacing:0}
 
   /* ── progress ──────────────────────────────────────────────────────────── */
-  .progress{margin:1.75rem 0 0}
+  .progress{max-width:38rem; margin:1.5rem auto 0}
   .track{
-    height:.375rem; border-radius:999px; background:var(--surface-2);
-    border:1px solid var(--hairline); overflow:hidden;
+    height:.3rem; border-radius:999px; background:var(--surface-2); overflow:hidden;
   }
   .fill{
     height:100%; width:0; border-radius:999px; background:var(--text);
@@ -1481,7 +1502,7 @@ ut_web_page() {
   /* Counters: an icon, a number, a word — on one line, no plate around them.
      A bordered grid with uppercase labels read like a terminal table; this reads
      like a status line. Zero counts stay quiet instead of demanding attention. */
-  .stats{display:flex; align-items:center; gap:1.5rem; margin-top:1.25rem; flex-wrap:wrap}
+  .stats{display:flex; align-items:center; justify-content:center; gap:1.25rem; margin-top:1rem; flex-wrap:wrap}
   .stat{
     display:inline-flex; align-items:center; gap:.5rem; min-width:0;
     color:var(--text-3); transition:opacity .3s ease;
@@ -1497,75 +1518,97 @@ ut_web_page() {
   .stat.has .v{color:var(--text)}
   .stat .k{font-size:.9375rem; color:var(--text-3)}
 
-  /* ── steps: a timeline rail, like the terminal had ─────────────────────── */
-  .steps{margin:2rem 0 0; position:relative}
+  /* ── steps: app list, deliberately not a terminal timeline ─────────────── */
+  .steps{
+    position:relative; margin:.25rem 0 0; padding:.4rem;
+    border:1px solid var(--hairline); border-radius:18px;
+    background:var(--bg-tint); overflow:visible;
+    box-shadow:0 18px 50px -36px rgba(0,0,0,.65);
+  }
   .step{
     position:relative; display:grid;
-    grid-template-columns:1.5rem 1.5rem minmax(6rem,1fr) auto;
-    align-items:center; gap:.875rem; padding:.625rem .75rem;
-    border-radius:10px; border:1px solid transparent;
+    grid-template-columns:2rem minmax(6rem,1fr) auto;
+    align-items:center; gap:.875rem; padding:.8rem .85rem;
+    border-radius:14px; border:1px solid transparent;
     cursor:pointer; -webkit-tap-highlight-color:transparent;
-    transition:background .15s ease;
+    opacity:0; transform:translateY(5px);
+    animation:row-in .35s cubic-bezier(.2,.8,.2,1) forwards;
+    transition:background-color .18s ease,border-color .18s ease,transform .12s ease;
   }
+  .step:nth-child(2){animation-delay:.025s}
+  .step:nth-child(3){animation-delay:.05s}
+  .step:nth-child(4){animation-delay:.075s}
+  .step:nth-child(5){animation-delay:.1s}
+  .step:nth-child(6){animation-delay:.125s}
+  .step:nth-child(7){animation-delay:.15s}
+  .step:nth-child(8){animation-delay:.175s}
+  @keyframes row-in{to{opacity:1;transform:none}}
+  .steps.ready .step{opacity:1;transform:none;animation:none}
+  .step + .step{margin-top:.15rem}
   .step:hover{background:var(--surface)}
-  .step:active{background:var(--surface-2)}
-  .step.open{background:var(--surface); border-color:var(--hairline)}
-  /* Framed rows (running / expanded) must not share an edge — two 1px
-     borders flush look like one fused box. Unframed rows stay tight. */
-  .step.run,.step.open{margin:.375rem 0}
-  /* each step's own output, opened in place */
-  .steplog{
-    grid-column:1 / -1; margin:.5rem 0 .25rem; padding:.75rem .875rem;
-    border-radius:10px; background:var(--bg-tint); border:1px solid var(--hairline);
-    font-family:var(--mono); font-size:.75rem; line-height:1.55; color:var(--text-2);
-    max-height:18rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere;
+  .step:active{transform:scale(.995)}
+  .step.has-popover{z-index:20; background:var(--surface); border-color:var(--hairline)}
+  /* Output floats above the list instead of turning a row into a terminal box. */
+  .log-popover{
+    position:absolute; z-index:30; left:3.7rem; right:.75rem; top:calc(100% - .15rem);
+    padding:.8rem .9rem .9rem; border:1px solid var(--hairline-strong);
+    border-radius:14px; background:rgba(18,21,27,.96);
+    box-shadow:0 18px 48px -20px rgba(0,0,0,.75);
+    backdrop-filter:blur(18px) saturate(150%);
+    -webkit-backdrop-filter:blur(18px) saturate(150%);
+    transform-origin:top center;
+    animation:popover-in .18s cubic-bezier(.2,.8,.2,1) both;
   }
-  .steplog:empty::after{content:"no output"; color:var(--text-3)}
-  .step.run{background:var(--surface); border-color:var(--hairline)}
-  .step .rail{
-    position:relative; width:1.5rem; height:100%; justify-self:center;
-    display:grid; place-items:center;
+  @media (prefers-color-scheme: light){
+    .log-popover{background:rgba(255,255,255,.96);box-shadow:0 18px 48px -24px rgba(16,20,40,.25)}
   }
-  /* the vertical line joining the nodes */
-  .step .rail::before{
-    content:""; position:absolute; top:-.75rem; bottom:-.75rem; width:1.5px;
-    background:var(--hairline-strong);
+  @keyframes popover-in{from{opacity:0;transform:translateY(-4px) scale(.985)}}
+  .log-head{
+    display:flex; align-items:center; gap:.5rem; margin-bottom:.55rem;
+    color:var(--text-2); font-size:.75rem; font-weight:500;
   }
-  .step.run .rail::before,.step.open .rail::before{top:-1.125rem; bottom:-1.125rem}
-  .step:first-child .rail::before{top:50%}
-  .step:last-child .rail::before{bottom:50%}
-  .node{
-    position:relative; width:.6875rem; height:.6875rem; border-radius:50%;
-    background:var(--bg); border:1.5px solid var(--hairline-strong);
+  .log-head svg{width:.9rem;height:.9rem;color:var(--text-3)}
+  .log-popover pre{
+    margin:0; max-height:11rem; overflow:auto;
+    white-space:pre-wrap; overflow-wrap:anywhere;
+    color:var(--text-2); font:400 .75rem/1.55 var(--mono);
   }
-  .step.done .node{background:var(--ok); border-color:var(--ok)}
-  .step.fail .node{background:var(--bad); border-color:var(--bad)}
-  .step.skip .node{background:var(--bg); border-color:var(--hairline)}
-  .step.run  .node{
-    background:var(--warn); border-color:var(--warn);
-    box-shadow:0 0 0 0 color-mix(in oklab,var(--warn) 60%,transparent);
-    animation:pulse 1.6s ease-out infinite;
+  .log-popover pre:empty::after{content:"No output yet";color:var(--text-3)}
+  .step.run{background:var(--surface-2); border-color:var(--hairline)}
+  .logo{
+    display:grid; place-items:center; width:2rem; height:2rem; opacity:.95;
+    border-radius:10px; background:var(--surface);
+    transition:transform .18s ease,background-color .18s ease;
   }
-  @keyframes pulse{
-    to{box-shadow:0 0 0 .55rem color-mix(in oklab,var(--warn) 0%,transparent)}
-  }
-  .logo{display:grid; place-items:center; width:1.5rem; height:1.5rem; opacity:.9}
+  .step:hover .logo{transform:scale(1.04);background:var(--surface-2)}
   .logo svg{width:1.25rem; height:1.25rem; display:block}
   .logo img{width:1.25rem; height:1.25rem; border-radius:5px; object-fit:contain}
+  .logo.report-logo{color:#8EAEFF;background:color-mix(in oklab,#5C8CFF 13%,var(--bg-tint))}
+  .logo.report-logo svg{width:1.2rem;height:1.2rem}
   .logo.mono{
-    font:600 .75rem/1 var(--sans); color:var(--text-3);
-    border:1px solid var(--hairline); border-radius:6px;
+    font:500 .75rem/1 var(--display); color:var(--text-3);
+    border:1px solid var(--hairline);
   }
   .label{min-width:0}
-  .label .n{font-weight:600; letter-spacing:-.005em}
-  .label .a{color:var(--text-3); margin-left:.5rem; font-size:.9375rem}
-  .step.skip .label .n,.step.skip .label .a{color:var(--text-3); font-weight:500}
-  .took{font-size:.875rem; color:var(--text-3); font-variant-numeric:tabular-nums}
-  .step.run .took{color:var(--warn)}
+  .label .n{font-weight:500; letter-spacing:-.01em}
+  .label .a{display:block; color:var(--text-3); margin-top:.05rem; font-size:.8125rem}
+  .step.skip .label .n,.step.skip .label .a{color:var(--text-3); font-weight:400}
+  .step-state{
+    display:inline-flex; align-items:center; gap:.4rem; justify-self:end;
+    color:var(--text-3); font-size:.8125rem; font-variant-numeric:tabular-nums;
+  }
+  .step-state svg{width:1rem;height:1rem;transition:transform .2s ease,opacity .2s ease}
+  .step.done .step-state svg{stroke-dasharray:32;animation:check-in .45s ease-out both}
+  @keyframes check-in{from{stroke-dashoffset:32;opacity:0}to{stroke-dashoffset:0;opacity:1}}
+  .step.done .step-state{color:var(--ok)}
+  .step.fail .step-state{color:var(--bad)}
+  .step.run .step-state{color:var(--warn)}
+  .step.run .step-state svg{animation:spin 1.1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
 
   /* live output of the running step, pinned under its own row */
   .tail{
-    grid-column:3 / -1; font-family:var(--mono); font-size:.75rem; color:var(--text-3);
+    grid-column:2 / -1; font-family:var(--display); font-size:.75rem; color:var(--text-3);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-top:.25rem;
   }
 
@@ -1583,11 +1626,24 @@ ut_web_page() {
   .verdict .mark svg{width:1.5rem; height:1.5rem}
   .headline{font-size:1.625rem; font-weight:700; letter-spacing:-.025em; margin:0; line-height:1.1}
   .sub{margin:.25rem 0 0; color:var(--text-2); font-size:.9375rem}
-  .section-title{
-    margin:2rem 0 0; display:flex; align-items:baseline; gap:.5rem;
-    font-size:.9375rem; color:var(--text-2);
+  .report-panel{
+    margin:2rem 0 0; padding:1rem; border:1px solid var(--hairline);
+    border-radius:18px; background:var(--bg-tint);
+    animation:report-open .42s cubic-bezier(.2,.8,.2,1) both;
   }
-  .section-title b{color:var(--text); font-weight:600}
+  @keyframes report-open{from{opacity:0;transform:translateY(-8px);clip-path:inset(0 0 100% 0 round 18px)}}
+  .report-head{display:flex;align-items:center;gap:.8rem;padding:.15rem .15rem .6rem}
+  .report-mark{
+    width:2.25rem;height:2.25rem;border-radius:11px;display:grid;place-items:center;
+    color:#8EAEFF;background:color-mix(in oklab,#5C8CFF 13%,var(--bg-tint));
+  }
+  .report-mark svg{width:1.25rem;height:1.25rem}
+  .report-head h3{margin:0;font-size:1rem;font-weight:500;letter-spacing:-.015em}
+  .report-summary{margin:.1rem 0 0;color:var(--text-3);font-size:.8125rem}
+  .report-empty{
+    margin:.25rem 0 0;padding:.85rem 1rem;border-radius:12px;
+    background:var(--surface);color:var(--text-2);font-size:.875rem;
+  }
   .cards{display:flex; flex-direction:column; gap:.5rem; margin-top:.875rem}
   .card{
     border:1px solid var(--hairline); border-radius:var(--r); background:var(--surface);
@@ -1632,51 +1688,127 @@ ut_web_page() {
 
 
   /* ── password sheet ────────────────────────────────────────────────────── */
+  /* Blur lives on the card, not the scrim — otherwise the sheet's backdrop is
+     already a flat fog and the card reads as solid --bg-tint. */
   .scrim{
     position:fixed; inset:0; z-index:50; display:grid; place-items:center; padding:1.5rem;
-    background:color-mix(in oklab,var(--bg) 55%,transparent);
-    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    background:color-mix(in oklab,var(--bg) 28%,transparent);
+    backdrop-filter:blur(18px) saturate(140%);
+    -webkit-backdrop-filter:blur(18px) saturate(140%);
     opacity:0; pointer-events:none; transition:opacity .25s ease;
   }
   .scrim.on{opacity:1; pointer-events:auto}
   .sheet{
-    width:min(28rem,100%); padding:1.5rem; border-radius:18px;
-    background:var(--bg-tint); border:1px solid var(--hairline);
-    box-shadow:0 24px 60px -20px rgba(0,0,0,.55);
-    transform:scale(.96); transition:transform .28s cubic-bezier(.2,.8,.2,1);
+    width:min(24rem,100%); padding:1.6rem 1.55rem 1.35rem; border-radius:22px;
+    font-family:var(--display); font-size:.9375rem; line-height:1.45;
+    background:rgba(255,255,255,.07);
+    border:1px solid rgba(255,255,255,.2);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.22), 0 30px 60px -24px rgba(0,0,0,.55);
+    backdrop-filter:blur(28px) saturate(180%);
+    -webkit-backdrop-filter:blur(28px) saturate(180%);
+    transform:scale(.97); transition:transform .28s cubic-bezier(.2,.8,.2,1);
+    position:relative;
   }
   .scrim.on .sheet{transform:scale(1)}
-  .sheet h3{margin:0; font-size:1.125rem; font-weight:650; letter-spacing:-.015em}
-  .sheet p{margin:.375rem 0 1.125rem; color:var(--text-2); font-size:.9375rem}
-  /* Nothing is rendered as you type — no characters, no dots — exactly like a
-     terminal password prompt. The caret still moves, so it's clear input lands. */
-  .pw{
-    width:100%; padding:.75rem .875rem; border-radius:11px; font:inherit;
-    border:1px solid var(--hairline-strong); background:var(--surface);
-    color:transparent; text-shadow:none; caret-color:var(--text);
-    -webkit-text-security:none; letter-spacing:0;
+  @media (prefers-color-scheme: light){
+    .sheet{
+      background:rgba(255,255,255,.42);
+      border-color:rgba(255,255,255,.65);
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.9), 0 28px 56px -22px rgba(16,20,40,.22);
+    }
   }
+  .sheet-head{margin:0; display:flex; align-items:center; gap:.5rem}
+  .sheet-head #pw-title{
+    font-size:1.35rem; font-weight:500; letter-spacing:-.02em; line-height:1.15;
+  }
+  .info{
+    appearance:none; width:1.25rem; height:1.25rem; padding:0;
+    border:0; background:transparent; color:var(--text-3);
+    display:grid; place-items:center; cursor:default; flex:none;
+  }
+  .info svg{width:1.1rem; height:1.1rem; display:block}
+  .info:hover,.info:focus-visible{color:var(--text-2)}
+  .info-tip{
+    position:absolute; left:1.2rem; right:1.2rem; top:calc(100% + .55rem); width:auto;
+    margin:0; padding:.75rem .85rem; border-radius:12px; text-align:left;
+    background:rgba(18,21,27,.62); color:var(--text);
+    border:1px solid rgba(255,255,255,.14);
+    backdrop-filter:blur(20px) saturate(160%);
+    -webkit-backdrop-filter:blur(20px) saturate(160%);
+    font-size:.8125rem; font-weight:500; line-height:1.45; letter-spacing:0;
+    opacity:0; pointer-events:none; transform:translateY(-4px);
+    transition:opacity .18s ease, transform .18s ease; z-index:3;
+  }
+  @media (prefers-color-scheme: light){
+    .info-tip{
+      background:rgba(255,255,255,.72); color:var(--text);
+      border-color:rgba(9,12,25,.1);
+    }
+  }
+  .sheet:has(.info:hover) .info-tip,
+  .sheet:has(.info:focus-visible) .info-tip,
+  .sheet:has(.info.open) .info-tip{opacity:1; transform:none}
+  /* Hidden: classic asterisks. Revealed: the actual characters. */
+  .pw-row{display:flex; align-items:center; gap:.65rem; margin-top:1.2rem}
+  .pw-field{position:relative; flex:1; min-width:0}
+  .pw{
+    width:100%; padding:.85rem 2.6rem .85rem 1rem; border-radius:14px;
+    font:inherit; border:1px solid rgba(255,255,255,.14);
+    background:rgba(255,255,255,.08);
+    color:var(--text); text-shadow:none; caret-color:var(--text);
+    -webkit-text-security:none; letter-spacing:.12em;
+  }
+  .sheet.reveal .pw{letter-spacing:0}
   .pw::selection{background:transparent}
-  .pw:focus{outline:none; border-color:color-mix(in oklab,var(--accent) 65%,transparent)}
-  .sheet .row{display:flex; align-items:center; gap:.75rem; margin-top:1rem}
-  .sheet .hint{font-size:.8125rem; color:var(--text-3); flex:1}
+  .sheet.reveal .pw::selection{background:color-mix(in oklab,var(--accent) 35%,transparent)}
+  .pw:focus{outline:none; border-color:rgba(255,255,255,.3); background:rgba(255,255,255,.12)}
+  @media (prefers-color-scheme: light){
+    .pw{border-color:rgba(9,12,25,.08); background:rgba(255,255,255,.38)}
+    .pw:focus{border-color:rgba(9,12,25,.2); background:rgba(255,255,255,.55)}
+  }
+  .eye{
+    appearance:none; position:absolute; right:.45rem; top:50%; transform:translateY(-50%);
+    width:1.85rem; height:1.85rem; padding:0; border:0; border-radius:8px;
+    background:transparent; color:var(--text-3); display:grid; place-items:center;
+    cursor:pointer;
+  }
+  .eye:hover{color:var(--text)}
+  .eye svg{width:1.05rem; height:1.05rem; display:block; grid-area:1 / 1; transition:opacity .2s ease}
+  .eye .off{opacity:0}
+  .sheet.reveal .eye .on{opacity:0}
+  .sheet.reveal .eye .off{opacity:1}
   .go{
-    padding:.5rem .875rem; border-radius:10px; border:1px solid transparent;
-    background:var(--text); color:var(--bg); font:inherit; font-weight:600;
-    cursor:pointer; transition:transform .1s ease-out, opacity .15s ease;
+    width:2.75rem; height:2.75rem; padding:0; border-radius:50%; border:1px solid transparent;
+    background:rgba(255,255,255,.92); color:#111317; display:grid; place-items:center;
+    flex:none; cursor:pointer; transition:transform .1s ease-out, opacity .15s ease;
+  }
+  .go svg{width:1.15rem; height:1.15rem; display:block}
+  @media (prefers-color-scheme: light){
+    .go{background:#12151C; color:#F6F7FB}
   }
   .go:active{transform:scale(.97)}
   .go[disabled]{opacity:.4; cursor:default}
 
   @media (prefers-reduced-motion: reduce){
-    .step.run .node{animation:none}
+    .step.run .step-state svg{animation:none}
+    .wrap,.step,.step.done .step-state svg{animation:none;opacity:1;transform:none}
+    .info-tip,.log-popover,.report-panel{transition:none;animation:none;filter:none;transform:none}
   }
   @media (prefers-reduced-transparency: reduce){
-    .card,.pill,.step.run{background:var(--bg-tint); backdrop-filter:none}
+    .card,.pill,.step.run{background:var(--bg-tint); backdrop-filter:none; -webkit-backdrop-filter:none}
+    .scrim{background:color-mix(in oklab,var(--bg) 88%,transparent); backdrop-filter:none; -webkit-backdrop-filter:none}
+    .sheet{background:var(--bg-tint); backdrop-filter:none; -webkit-backdrop-filter:none}
   }
   @media (prefers-contrast: more){
     :root{--hairline:currentColor; --hairline-strong:currentColor}
     .card,.pill,.step.run{background:var(--bg-tint)}
+  }
+  @media (max-width:40rem){
+    .wrap{padding:2rem 1rem 4rem}
+    .masthead{padding:0 0 1.25rem}
+    .step{padding:.72rem .65rem}
+    .stats{gap:.85rem}
+    .log-popover{left:.65rem;right:.65rem}
   }
 </style>
 </head>
@@ -1719,8 +1851,16 @@ ut_web_page() {
           <p class="sub" id="r-sub"></p>
         </span>
       </div>
-      <p class="section-title" id="r-title" hidden></p>
-      <div class="cards" id="r-cards"></div>
+      <section class="report-panel" id="r-report" hidden>
+        <div class="report-head">
+          <span class="report-mark">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4M9 12h6M9 15.5h4"/></svg>
+          </span>
+          <span><h3>Report</h3><p class="report-summary" id="r-title"></p></span>
+        </div>
+        <div class="cards" id="r-cards"></div>
+        <p class="report-empty" id="r-empty" hidden>No version changes detected in this run.</p>
+      </section>
     </section>
 
     <section class="files" id="files"></section>
@@ -1728,12 +1868,24 @@ ut_web_page() {
   </div>
   <div class="scrim" id="scrim">
     <div class="sheet" id="pwform" role="dialog" aria-modal="true" aria-labelledby="pw-title">
-      <h3 id="pw-title">Authorization</h3>
-      <p>A step needs administrator access to continue. It goes straight to <code>sudo</code> on this Mac over loopback and is never stored.</p>
-      <input class="pw" id="ut-chal" type="text" inputmode="none" name="ut-chal" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" aria-label="Authorization" readonly>
-      <div class="row">
-        <span class="hint">Nothing is shown as you type</span>
-        <button class="go" type="button" id="ut-chal-go">Continue</button>
+      <h3 class="sheet-head">
+        <span id="pw-title">sudo</span>
+        <button type="button" class="info" aria-label="About sudo" aria-describedby="pw-tip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path d="M12 8h.01"/></svg>
+        </button>
+      </h3>
+      <p class="info-tip" id="pw-tip" role="tooltip">The password stays on this Mac — never stored, never sent to the cloud. It is only used so we can update programs. What you are working on will not disappear, be deleted, or stop.</p>
+      <div class="pw-row">
+        <div class="pw-field">
+          <input class="pw" id="ut-chal" type="text" inputmode="none" name="ut-chal" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" aria-label="sudo password" readonly>
+          <button class="eye" type="button" id="ut-chal-eye" aria-label="Show password" aria-pressed="false">
+            <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 1 0 2.8 2.8"/><path d="M9.5 5.2A11 11 0 0 1 12 5c6.4 0 10 7 10 7a19 19 0 0 1-2.2 3.2"/><path d="M6.7 6.7C4 8.6 2 12 2 12s3.6 7 10 7a10 10 0 0 0 4.2-.9"/></svg>
+          </button>
+        </div>
+        <button class="go" type="button" id="ut-chal-go" aria-label="Continue">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+        </button>
       </div>
     </div>
   </div>
@@ -1774,12 +1926,32 @@ WEB_HTML_HEAD
 
   function logo(slug, img, name) {
     if (img) return `<span class="logo"><img src="${img}" alt=""></span>`;
+    if (slug === 'report') return `<span class="logo report-logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4M9 12h6M9 15.5h4"/></svg></span>`;
     if (slug) return `<span class="logo"><svg viewBox="0 0 24 24"><use href="#i-${slug}"/></svg></span>`;
     return `<span class="logo mono">${(name || '?').charAt(0).toUpperCase()}</span>`;
   }
+  function stepState(s, elapsed) {
+    if (s.s === 'done') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4 4 10-10"/></svg>${dur(s.t)}</span>`;
+    if (s.s === 'fail') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>${dur(s.t)}</span>`;
+    if (s.s === 'skip') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 12h10"/></svg>${dur(s.t)}</span>`;
+    if (s.s === 'run') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"/></svg><span class="took">${fmt(elapsed)}</span></span>`;
+    return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg></span>`;
+  }
 
-  let barPct = 0, lastSig = '';
+  function stepMarkup(s, st) {
+    return `<div class="step ${s.s}" data-label="${s.a ? `${s.n} · ${s.a}` : s.n}" role="button" tabindex="0">
+          ${logo(s.slug, s.img, s.n)}
+          <span class="label"><span class="n">${s.n}</span>${s.a ? `<span class="a">${s.a}</span>` : ''}</span>
+          ${stepState(s, st.elapsed - (s.b ?? st.elapsed))}
+          ${s.s === 'run' && st.tail ? `<span class="tail">${st.tail}</span>` : ''}
+        </div>`;
+  }
+
+  let barPct = 0, lastSig = '', stepsReadyTimer = 0;
+  let latestUpdates = [], latestPhase = 'run';
   function render(st) {
+    latestUpdates = st.updates || [];
+    latestPhase = st.phase;
     // header
     $('phase').textContent =
       st.phase === 'done' ? (st.fail ? `${st.done} updated, ${st.fail} failed` : `${st.done} steps completed`)
@@ -1793,22 +1965,44 @@ WEB_HTML_HEAD
     const pct = st.total ? ((st.done + st.skip + st.fail) / st.total) * 100 : 0;
     spring(() => barPct, (v) => { barPct = v; $('fill').style.width = v + '%'; }, pct, 0.5);
 
-    // steps — rebuilt only when something actually changed
+    // Patch only rows that changed. Rebuilding the whole list made every status
+    // transition visibly flash and restarted all entrance animations.
     const sig = st.steps.map((s) => s.s + (s.t ?? '')).join('|') + '¦' + (st.tail || '');
     if (sig !== lastSig) {
       lastSig = sig;
-      $('steps').innerHTML = st.steps.map((s) => `
-        <div class="step ${s.s}" data-label="${s.a ? `${s.n} · ${s.a}` : s.n}" role="button" tabindex="0">
-          <span class="rail"><span class="node"></span></span>
-          ${logo(s.slug, s.img, s.n)}
-          <span class="label"><span class="n">${s.n}</span>${s.a ? `<span class="a">${s.a}</span>` : ''}</span>
-          <span class="took">${s.s === 'run' ? fmt(st.elapsed - (s.b ?? st.elapsed)) : dur(s.t)}</span>
-          ${s.s === 'run' && st.tail ? `<span class="tail">${st.tail}</span>` : ''}
-        </div>`).join('');
-      // re-attach any log panes the user had open before this repaint
-      for (const el of $('steps').children) {
-        const label = el.dataset.label;
-        if (opened.has(label)) paintStepLog(el, label);
+      const list = $('steps');
+      st.steps.forEach((s, i) => {
+        const key = `${s.s}|${s.t ?? ''}`;
+        const old = list.children[i];
+        if (old && old.dataset.render === key) {
+          if (s.s === 'run') {
+            let tail = old.querySelector('.tail');
+            if (st.tail && !tail) {
+              tail = document.createElement('span');
+              tail.className = 'tail';
+              old.appendChild(tail);
+            }
+            if (tail) {
+              if (st.tail) tail.textContent = st.tail;
+              else tail.remove();
+            }
+          }
+          return;
+        }
+        const box = document.createElement('div');
+        box.innerHTML = stepMarkup(s, st);
+        const next = box.firstElementChild;
+        next.dataset.render = key;
+        if (old) {
+          if (activeLogEl === old) hideStepLog(old);
+          old.replaceWith(next);
+        } else {
+          list.appendChild(next);
+        }
+      });
+      while (list.children.length > st.steps.length) list.lastElementChild.remove();
+      if (!list.classList.contains('ready') && !stepsReadyTimer) {
+        stepsReadyTimer = setTimeout(() => list.classList.add('ready'), 450);
       }
     } else {
       // cheap path: only the running step's clock ticks
@@ -1839,10 +2033,11 @@ WEB_HTML_HEAD
         `${st.done} steps completed · ${st.skip} skipped${failed ? ` · ${st.fail} failed` : ''} · took ${fmt(st.elapsed)}`;
 
       const ups = st.updates || [];
-      $('r-title').hidden = false;
-      $('r-title').innerHTML = ups.length
-        ? `<b>${ups.length}</b> ${ups.length === 1 ? 'tool' : 'tools'} moved to a new version`
-        : 'Everything was already on its latest version';
+      $('r-report').hidden = false;
+      $('r-title').textContent = ups.length
+        ? `${ups.length} ${ups.length === 1 ? 'tool moved' : 'tools moved'} to a new version`
+        : 'No changes';
+      $('r-empty').hidden = ups.length > 0;
       $('r-cards').innerHTML = ups.map((u) => `
         <div class="card">
           ${logo(u.slug, u.img, u.n)}
@@ -1856,7 +2051,8 @@ WEB_HTML_HEAD
   }
 
   /* ── per-step output: the log is one file, split on the run's own banners ─── */
-  const opened = new Set();
+  const hoverLogs = matchMedia('(hover: hover) and (pointer: fine)').matches;
+  let activeLogEl = null, logToken = 0;
   let logText = '', logAt = 0;
   async function fetchLog() {
     if (Date.now() - logAt < 800) return logText;
@@ -1874,24 +2070,42 @@ WEB_HTML_HEAD
     }
     return '';
   }
-  async function toggleStep(el, label) {
-    const isOpen = opened.has(label);
-    if (isOpen) { opened.delete(label); } else { opened.add(label); }
-    await fetchLog();
-    paintStepLog(el, label);
+  function reportMarkdown() {
+    if (latestPhase !== 'done') return '# Report\n\n_Collecting version changes…_';
+    if (!latestUpdates.length) return '# Report\n\n_No version changes detected in this run._';
+    return ['# Report', '', '## Updated', '', ...latestUpdates.map(
+      (u) => `- **${u.n}**: \`${u.o}\` → \`${u.w}\``
+    )].join('\n');
   }
-  function paintStepLog(el, label) {
-    const existing = el.querySelector('.steplog');
-    if (!opened.has(label)) { existing?.remove(); el.classList.remove('open'); return; }
-    el.classList.add('open');
-    const box = existing || Object.assign(document.createElement('pre'), { className: 'steplog' });
-    const body = sliceFor(label);
-    if (box.textContent !== body) {
-      const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 8;
-      box.textContent = body;
-      if (stick) box.scrollTop = box.scrollHeight;
+  async function showStepLog(el, label) {
+    if (activeLogEl === el && el.querySelector('.log-popover')) return;
+    hideStepLog();
+    const token = ++logToken;
+    activeLogEl = el;
+    el.classList.add('has-popover');
+    await fetchLog();
+    if (token !== logToken || activeLogEl !== el || !el.isConnected) return;
+    const panel = document.createElement('aside');
+    panel.className = 'log-popover';
+    panel.setAttribute('role', 'status');
+    panel.innerHTML = `<div class="log-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 9h8M8 13h5"/><rect x="4" y="3.5" width="16" height="17" rx="3"/></svg><span></span></div><pre></pre>`;
+      const isReport = label.startsWith('Report');
+      panel.querySelector('.log-head span').textContent = isReport ? 'Report · Markdown' : label;
+      panel.querySelector('pre').textContent = isReport ? reportMarkdown() : sliceFor(label);
+    el.appendChild(panel);
+  }
+  function hideStepLog(el = activeLogEl) {
+    if (!el) return;
+    logToken++;
+    el.querySelector('.log-popover')?.remove();
+    el.classList.remove('has-popover');
+    if (activeLogEl === el) {
+      activeLogEl = null;
     }
-    if (!existing) el.appendChild(box);
+  }
+  function toggleStepLog(el, label) {
+    if (activeLogEl === el) hideStepLog(el);
+    else showStepLog(el, label);
   }
 
   /* ── files + the log, rendered once and kept in sync ─────────────────────── */
@@ -1949,17 +2163,36 @@ WEB_HTML_HEAD
   }
 
 
-  /* ── auth sheet: keystrokes stay in a JS buffer, never in the DOM.
+  /* ── auth sheet: keystrokes stay in a JS buffer; while hidden, the DOM only
+     contains one asterisk per character.
      Not type=password, not a <form>, so browsers/extensions don't treat it as
      a login field (no save/fill prompt). A page-wide keylogger still can. ── */
   let asking = false;
   let chal = [];
-  const scrim = $('scrim'), chalInput = $('ut-chal');
-  function chalClear() { chal = []; chalInput.value = ''; }
+  let revealed = false;
+  let hideTimer = 0;
+  const HIDE_AFTER = 120000;
+  const scrim = $('scrim'), sheet = $('pwform'), chalInput = $('ut-chal'), eyeBtn = $('ut-chal-eye');
+  function paintChal() { chalInput.value = revealed ? chal.join('') : '*'.repeat(chal.length); }
+  function setRevealed(on) {
+    revealed = on;
+    sheet.classList.toggle('reveal', on);
+    eyeBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    eyeBtn.setAttribute('aria-label', on ? 'Hide password' : 'Show password');
+    clearTimeout(hideTimer);
+    paintChal();
+    if (on) {
+      hideTimer = setTimeout(() => setRevealed(false), HIDE_AFTER);
+    }
+  }
+  function chalClear() {
+    chal = [];
+    setRevealed(false);
+  }
   function askPassword(prompt) {
     if (asking) return;
     asking = true;
-    $('pw-title').textContent = /again|wrong|sorry/i.test(prompt) ? 'Try again' : 'Authorization';
+    $('pw-title').textContent = /again|wrong|sorry/i.test(prompt) ? 'try again' : 'sudo';
     chalClear();
     scrim.classList.add('on');
     setTimeout(() => { chalInput.removeAttribute('readonly'); chalInput.focus(); }, 50);
@@ -1981,34 +2214,68 @@ WEB_HTML_HEAD
       });
     } catch { /* the run will time out on its own */ }
   }
+  function noteActivity() {
+    if (!revealed) return;
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => setRevealed(false), HIDE_AFTER);
+  }
   chalInput.addEventListener('focus', () => chalInput.removeAttribute('readonly'));
   chalInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); submitChal(); return; }
-    if (e.key === 'Backspace') { e.preventDefault(); chal.pop(); return; }
+    if (e.key === 'Backspace') { e.preventDefault(); chal.pop(); paintChal(); noteActivity(); return; }
     if (e.metaKey || e.ctrlKey) {
       if (e.key === 'v' || e.key === 'V') return;
       e.preventDefault();
       return;
     }
-    if (e.key.length === 1) { e.preventDefault(); chal.push(e.key); }
+    if (e.key.length === 1) { e.preventDefault(); chal.push(e.key); paintChal(); noteActivity(); }
   });
   chalInput.addEventListener('paste', (e) => {
     e.preventDefault();
     const t = (e.clipboardData && e.clipboardData.getData('text')) || '';
     for (const c of t) if (c !== '\n' && c !== '\r') chal.push(c);
+    paintChal();
+    noteActivity();
   });
   chalInput.addEventListener('beforeinput', (e) => e.preventDefault());
-  chalInput.addEventListener('input', () => { chalInput.value = ''; });
+  chalInput.addEventListener('input', paintChal);
+  eyeBtn.addEventListener('click', () => setRevealed(!revealed));
   $('ut-chal-go').addEventListener('click', submitChal);
+  const infoBtn = sheet.querySelector('.info');
+  const tipOn = (on) => infoBtn.classList.toggle('open', on);
+  infoBtn.addEventListener('mouseenter', () => tipOn(true));
+  infoBtn.addEventListener('mouseleave', () => tipOn(false));
+  infoBtn.addEventListener('focus', () => tipOn(true));
+  infoBtn.addEventListener('blur', () => tipOn(false));
 
-  $('steps').addEventListener('click', (e) => {
+  $('steps').addEventListener('pointerover', (e) => {
     const el = e.target.closest('.step');
-    if (el) toggleStep(el, el.dataset.label);
+    if (!hoverLogs || !el || el.contains(e.relatedTarget)) return;
+    showStepLog(el, el.dataset.label);
+  });
+  $('steps').addEventListener('pointerout', (e) => {
+    const el = e.target.closest('.step');
+    if (!hoverLogs || !el || el.contains(e.relatedTarget)) return;
+    hideStepLog(el);
+  });
+  $('steps').addEventListener('focusin', (e) => {
+    const el = e.target.closest('.step');
+    if (el) showStepLog(el, el.dataset.label);
+  });
+  $('steps').addEventListener('focusout', (e) => {
+    const el = e.target.closest('.step');
+    if (!el || el.contains(e.relatedTarget)) return;
+    hideStepLog(el);
+  });
+  $('steps').addEventListener('click', (e) => {
+    if (hoverLogs) return;
+    const el = e.target.closest('.step');
+    if (el) toggleStepLog(el, el.dataset.label);
   });
   $('steps').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const el = e.target.closest('.step');
-    if (el) { e.preventDefault(); toggleStep(el, el.dataset.label); }
+    if (el) { e.preventDefault(); toggleStepLog(el, el.dataset.label); }
   });
 
   let misses = 0;
@@ -2345,11 +2612,7 @@ LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
 #   command : the actual work (stdout+stderr -> log)
 # ---------------------------------------------------------------------------
 STEPS=(
-  "Homebrew · update index¦have brew¦brew update"
-  "Report · scan versions¦true¦ut_report_begin"
-  "Homebrew · upgrade formulae¦have brew¦HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1 brew upgrade"
-  "Homebrew · upgrade casks¦have brew¦ut_upgrade_casks_smart \"\$GREEDY_FLAG\""
-  "Homebrew · autoremove + cleanup¦have brew¦brew autoremove; brew cleanup -s"
+  "Homebrew · update everything¦have brew¦ut_update_homebrew_all"
   "npm · global packages¦have npm¦npm_update_global"
   "pnpm · global packages¦have pnpm¦pnpm_update_global"
   "uv · self + tools¦have uv¦{ uv self update 2>/dev/null||brew upgrade uv 2>/dev/null; }; uv tool upgrade --all 2>/dev/null||true"
@@ -2361,7 +2624,7 @@ STEPS=(
   "Antigravity · agy update¦have agy¦agy update"
   "gh · extensions¦have gh¦gh extension upgrade --all"
   "VS Code · extensions¦have code¦vscode_update_exts"
-  "Report · save to Desktop¦true¦ut_report_finish"
+  "Report · what changed¦true¦ut_report_finish"
 )
 
 TOTAL=${#STEPS[@]}
@@ -2502,6 +2765,10 @@ export GIT_TERMINAL_PROMPT=0
   sudo_prime || true
   ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
   SUDO_KEEPER=$!
+
+  # With no Homebrew step there is nowhere to take the pre-update snapshot;
+  # still capture standalone CLI versions for the final report.
+  have brew || ut_report_begin
 
   local entry guard cmd pid rc stalled last_size last_change size prompt reply
   for ((i=0;i<TOTAL;i++)); do
