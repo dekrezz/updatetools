@@ -2,18 +2,20 @@
 # updatetools — update everything updatable on this Mac.
 #
 # The run has no terminal UI: it serves a live dashboard on 127.0.0.1 and opens
-# it in your browser. One file, no companion scripts, nothing left on disk.
+# it in your browser. One file, no companion scripts; deferred app updates clean
+# up their temporary staged bundle and one-shot helper after installation.
 #
 # Usage:
 #   updatetools                 # opens a live dashboard in your browser
 #   updatetools --plain         # plain scrolling text output, no browser
 #   updatetools --no-greedy     # don't force-upgrade casks that self-manage
 #   updatetools --no-close      # never close running apps (stage all cask upgrades)
+#   updatetools --no-manual-apps # skip safe updates for apps installed from DMGs
 #   updatetools --debug         # keep the run's log and write the HTML report to
 #                               # the Desktop (both are temporary otherwise)
 #
 # Env toggles:
-#   GREEDY=0 PLAIN=1 CLOSE_APPS=0 DEBUG=1
+#   GREEDY=0 PLAIN=1 CLOSE_APPS=0 QUIET_APPS=0 DEBUG=1
 #   UPDATETOOLS_CLOSE="a b"      # force-close these cask apps to upgrade them now
 #   UPDATETOOLS_PROTECT="a b"    # never close these cask apps
 set -u
@@ -21,10 +23,10 @@ set -u
 GREEDY="${GREEDY:-1}"
 PLAIN="${PLAIN:-0}"
 CLOSE_APPS="${CLOSE_APPS:-1}"
+QUIET_APPS="${QUIET_APPS:-1}"
 MAKE_REPORT="${MAKE_REPORT:-1}"
 OPEN_REPORT="${OPEN_REPORT:-0}"
-# Debug keeps the artefacts a normal run throws away: the step log and the HTML
-# report. Without it the dashboard is the whole output and nothing is left behind.
+# Debug keeps the step log and HTML report that a normal run removes.
 DEBUG="${DEBUG:-0}"
 # Watchdog: kill a step that emits no output for this many seconds. 0 disables.
 STALL_TIMEOUT="${STALL_TIMEOUT:-300}"
@@ -37,12 +39,13 @@ for arg in "$@"; do
     --debug|--keep)  DEBUG=1 ;;
     --no-greedy)     GREEDY=0 ;;
     --no-close)      CLOSE_APPS=0 ;;
-    -h|--help)  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-manual-apps) QUIET_APPS=0 ;;
+    -h|--help)  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown option: $arg"; exit 2 ;;
   esac
 done
 [ "$GREEDY" = "1" ] && GREEDY_FLAG="--greedy" || GREEDY_FLAG=""
-export CLOSE_APPS MAKE_REPORT OPEN_REPORT DEBUG
+export CLOSE_APPS QUIET_APPS MAKE_REPORT OPEN_REPORT DEBUG
 
 # Homebrew env
 if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -75,7 +78,8 @@ fi
 # It provides three capabilities:
 #   1. classify_cask()          — decide per running app: close | protect | ...
 #   2. ut_upgrade_casks_smart()  — upgrade outdated casks using that decision
-#   3. version report to Desktop — ut_report_begin / ut_report_finish (HTML)
+#   3. quiet updates for manually installed DMG apps
+#   4. version report to Desktop — ut_report_begin / ut_report_finish (HTML)
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -485,6 +489,276 @@ ut_upgrade_casks_smart() {
     local c; for c in "${manual[@]}"; do echo "  brew upgrade --cask $c"; done
   fi
   echo "casks: $n_up upgraded · $n_close closed+relaunched · $n_protect staged · $n_skip skipped(manual)"
+  return 0
+}
+
+# ===========================================================================
+# Quiet updates for manually installed drag-and-drop apps
+# ===========================================================================
+# These apps are not adopted into Homebrew. Homebrew's cask metadata is used only
+# as a signed-download catalogue. Matching and installation fail closed:
+#   * exactly one cask must ship an app with the same bundle filename;
+#   * the cask must expose a comparable, newer version and a SHA-256 checksum;
+#   * the downloaded app must keep the bundle ID and Developer Team ID;
+#   * codesign and Gatekeeper must accept the replacement.
+# A running app is never quit or modified. Its verified replacement is staged as
+# a hidden sibling and a detached helper swaps the bundles after a natural exit.
+
+ut_version_lt() { # $1 installed, $2 candidate; numeric dotted versions only
+  local old="${1#v}" new="${2#v}"
+  old="${old%%,*}"; new="${new%%,*}"
+  printf '%s\n' "$old" | grep -Eq '^[0-9]+([.][0-9]+)*$' || return 1
+  printf '%s\n' "$new" | grep -Eq '^[0-9]+([.][0-9]+)*$' || return 1
+  awk -v a="$old" -v b="$new" 'BEGIN {
+    na=split(a, av, "."); nb=split(b, bv, "."); n=(na>nb?na:nb)
+    for (i=1; i<=n; i++) {
+      ai=(i<=na?av[i]+0:0); bi=(i<=nb?bv[i]+0:0)
+      if (ai < bi) exit 0
+      if (ai > bi) exit 1
+    }
+    exit 1
+  }'
+}
+
+ut_cask_match_token() { # $1 aggregate cask JSON, $2 exact app bundle basename
+  local catalog="$1" app="$2"
+  jq -r --arg app "$app" '
+    [.[] | select(any(.artifacts[]?; any(.app[]?;
+      type == "string" and ((split("/") | last) == $app)))) | .token]
+    | if length == 1 then .[0] else empty end
+  ' "$catalog" 2>/dev/null
+}
+
+ut_cask_build_index() { # $1 aggregate cask JSON, $2 output TSV
+  jq -r '
+    .[] as $c | $c.artifacts[]? | objects | .app[]?
+    | select(type == "string") | [(split("/") | last), $c.token] | @tsv
+  ' "$1" > "$2"
+}
+
+ut_cask_match_index() { # $1 app-name<TAB>token index, $2 exact app basename
+  local index="$1" app="$2"
+  awk -F '\t' -v app="$app" '$1 == app { token=$2; count++ }
+    END { if (count == 1) print token }' "$index"
+}
+
+ut_plist_value() { # $1 app path, $2 key
+  /usr/libexec/PlistBuddy -c "Print :$2" "$1/Contents/Info.plist" 2>/dev/null
+}
+
+ut_team_id() { # $1 app path
+  codesign -dv --verbose=4 "$1" 2>&1 | awk -F= '/^TeamIdentifier=/{print $2; exit}'
+}
+
+ut_build_swap_helper() { # $1 output executable
+  local out="$1" src
+  src="${out}.c"
+  mkdir -p "$(dirname "$out")" || return 1
+  cat > "$src" <<'UT_SWAP_C'
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <unistd.h>
+#ifndef RENAME_SWAP
+#define RENAME_SWAP 0x00000002
+#endif
+int main(int argc, char **argv) {
+  if (argc != 3) return 64;
+  if (renameatx_np(AT_FDCWD, argv[1], AT_FDCWD, argv[2], RENAME_SWAP) != 0) {
+    perror("renameatx_np");
+    return 1;
+  }
+  return 0;
+}
+UT_SWAP_C
+  xcrun clang -Os -Wall -Wextra -Werror "$src" -o "$out" >/dev/null 2>&1
+  local rc=$?
+  rm -f "$src"
+  [ "$rc" -eq 0 ] && chmod 700 "$out"
+  return "$rc"
+}
+
+ut_atomic_swap() { # $1 installed app/dir, $2 staged app/dir, $3 optional helper
+  local target="$1" staged="$2" helper="${3:-}" own=""
+  [ -d "$target" ] && [ -d "$staged" ] || return 1
+  [ "$(stat -f '%d' "$target" 2>/dev/null)" = "$(stat -f '%d' "$staged" 2>/dev/null)" ] || return 1
+  if [ -z "$helper" ]; then
+    own="$(mktemp -d "${TMPDIR:-/tmp}/updatetools-swap.XXXXXX")" || return 1
+    helper="$own/swap"
+    ut_build_swap_helper "$helper" || { rm -rf "$own"; return 1; }
+  fi
+  "$helper" "$target" "$staged"
+  local rc=$?
+  [ -n "$own" ] && rm -rf "$own"
+  return "$rc"
+}
+
+ut_verify_app_replacement() { # $1 installed, $2 candidate
+  local installed="$1" candidate="$2"
+  local old_bid new_bid old_team new_team old_ver new_ver
+  old_bid="$(ut_plist_value "$installed" CFBundleIdentifier)"
+  new_bid="$(ut_plist_value "$candidate" CFBundleIdentifier)"
+  [ -n "$old_bid" ] && [ "$old_bid" = "$new_bid" ] || return 1
+  old_team="$(ut_team_id "$installed")"; new_team="$(ut_team_id "$candidate")"
+  [ -n "$old_team" ] && [ "$old_team" = "$new_team" ] || return 1
+  codesign --verify --deep --strict --verbose=2 "$installed" >/dev/null 2>&1 || return 1
+  codesign --verify --deep --strict --verbose=2 "$candidate" >/dev/null 2>&1 || return 1
+  spctl --assess --type execute --verbose=2 "$candidate" >/dev/null 2>&1 || return 1
+  old_ver="$(ut_plist_value "$installed" CFBundleShortVersionString)"
+  new_ver="$(ut_plist_value "$candidate" CFBundleShortVersionString)"
+  [ -n "$old_ver" ] && [ -n "$new_ver" ] && ut_version_lt "$old_ver" "$new_ver"
+}
+
+ut_spawn_deferred_swap() { # $1 target, $2 staged, $3 bundle id
+  local target="$1" staged="$2" bid="$3"
+  local jobs="$HOME/Library/Caches/updatetools/jobs" safe job helper script
+  safe="$(printf '%s' "$bid" | tr -cs 'A-Za-z0-9._-' '_')"
+  job="$jobs/${safe}-$(date +%s)-$$"
+  helper="$job/swap"; script="$job/install.sh"
+  mkdir -p "$job" || return 1
+  ut_build_swap_helper "$helper" || { rm -rf "$job"; return 1; }
+
+  {
+    printf '#!/bin/bash\nset -u\n'
+    printf 'target=%q\nstaged=%q\nbid=%q\nhelper=%q\njob=%q\n' \
+      "$target" "$staged" "$bid" "$helper" "$job"
+    cat <<'UT_DEFERRED'
+log="$job/install.log"
+while [ -n "$(/usr/bin/lsappinfo find "bundleID=$bid" 2>/dev/null)" ]; do
+  sleep 5
+done
+sleep 1
+if [ -n "$(/usr/bin/lsappinfo find "bundleID=$bid" 2>/dev/null)" ]; then
+  exit 0
+fi
+plist_bid() { /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$1/Contents/Info.plist" 2>/dev/null; }
+team_id() { /usr/bin/codesign -dv --verbose=4 "$1" 2>&1 | /usr/bin/awk -F= '/^TeamIdentifier=/{print $2; exit}'; }
+if [ "$(plist_bid "$target")" != "$bid" ] || [ "$(plist_bid "$staged")" != "$bid" ]; then
+  printf 'bundle identity changed; staged update retained\n' > "$log"; exit 1
+fi
+if [ -z "$(team_id "$target")" ] || [ "$(team_id "$target")" != "$(team_id "$staged")" ]; then
+  printf 'signing identity changed; staged update retained\n' > "$log"; exit 1
+fi
+/usr/bin/codesign --verify --deep --strict "$target" >/dev/null 2>&1 || exit 1
+/usr/bin/codesign --verify --deep --strict "$staged" >/dev/null 2>&1 || exit 1
+/usr/sbin/spctl --assess --type execute "$staged" >/dev/null 2>&1 || exit 1
+if "$helper" "$target" "$staged"; then
+  /bin/rm -rf "$staged"
+  /bin/rm -rf "$job"
+fi
+UT_DEFERRED
+  } > "$script"
+  chmod 700 "$script"
+  nohup /bin/bash "$script" >/dev/null 2>&1 </dev/null &
+  return 0
+}
+
+ut_install_or_defer() { # $1 installed app, $2 verified staged app, $3 bundle id
+  local target="$1" staged="$2" bid="$3"
+  if ! is_running "$bid"; then
+    ut_atomic_swap "$target" "$staged" || return 1
+    rm -rf "$staged" # after the swap this path contains the old app
+    return 0
+  fi
+  [ "${UPDATETOOLS_DEFER_SPAWN:-1}" = "1" ] || return 3
+  ut_spawn_deferred_swap "$target" "$staged" "$bid" || return 1
+  return 3
+}
+
+ut_update_manual_apps() {
+  if ! have brew || ! have jq || ! have curl || ! have xcrun; then
+    echo "manual apps: brew, jq, curl, or Xcode command-line tools missing — skipped"
+    return 0
+  fi
+  local work catalog index roots root app name token info cask_ver installed_ver url sha
+  local download mount candidate bid stage rc
+  local found=0 managed=0 matched=0 updated=0 deferred=0 skipped=0
+  work="$(mktemp -d "${TMPDIR:-/tmp}/updatetools-apps.XXXXXX")" || return 1
+  catalog="$work/casks.json"
+  index="$work/apps.tsv"
+  if [ -n "${UPDATETOOLS_CASK_CATALOG:-}" ]; then
+    cp "$UPDATETOOLS_CASK_CATALOG" "$catalog" || { rm -rf "$work"; return 1; }
+  elif ! curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        https://formulae.brew.sh/api/cask.json -o "$catalog"; then
+      rm -rf "$work"; echo "manual apps: could not fetch cask catalogue"; return 1
+  fi
+  ut_cask_build_index "$catalog" "$index" || {
+    rm -rf "$work"; echo "manual apps: invalid cask catalogue"; return 1
+  }
+
+  roots="${UPDATETOOLS_APP_ROOTS:-/Applications:$HOME/Applications}"
+  while IFS= read -r root; do
+    [ -d "$root" ] || continue
+    while IFS= read -r -d '' app; do
+      found=$((found+1)); name="${app##*/}"
+      [ -f "$app/Contents/_MASReceipt/receipt" ] && { skipped=$((skipped+1)); continue; }
+      bid="$(ut_plist_value "$app" CFBundleIdentifier)"
+      [ -n "$bid" ] || { skipped=$((skipped+1)); continue; }
+      case "$bid" in com.apple.*) skipped=$((skipped+1)); continue ;; esac
+
+      token="$(ut_cask_match_index "$index" "$name")"
+      [ -n "$token" ] || { skipped=$((skipped+1)); continue; }
+      if brew list --cask "$token" >/dev/null 2>&1; then
+        managed=$((managed+1)); continue
+      fi
+      info="$(brew info --json=v2 --cask "$token" 2>/dev/null)"
+      [ -n "$info" ] || { skipped=$((skipped+1)); continue; }
+      cask_ver="$(printf '%s' "$info" | jq -r '.casks[0].version // empty' | cut -d, -f1)"
+      installed_ver="$(ut_plist_value "$app" CFBundleShortVersionString)"
+      if [ -z "$installed_ver" ] || ! ut_version_lt "$installed_ver" "$cask_ver"; then
+        skipped=$((skipped+1)); continue
+      fi
+      matched=$((matched+1))
+      if [ "${UPDATETOOLS_MANUAL_APPS_DRY_RUN:-0}" = "1" ]; then
+        echo ">> $name: $installed_ver → $cask_ver (would stage verified DMG)"
+        continue
+      fi
+      url="$(printf '%s' "$info" | jq -r '.casks[0].url // empty')"
+      sha="$(printf '%s' "$info" | jq -r '.casks[0].sha256 // empty')"
+      case "$url" in https://*) ;; *) skipped=$((skipped+1)); continue ;; esac
+      printf '%s\n' "$sha" | grep -Eq '^[0-9a-fA-F]{64}$' \
+        || { skipped=$((skipped+1)); continue; }
+      echo ">> $name: $installed_ver → $cask_ver (verified DMG staging)"
+
+      download="$work/${token}.download"
+      if ! curl --fail --progress-bar --show-error --location --proto '=https' --proto-redir '=https' "$url" -o "$download"; then
+        echo "   download failed — skipped"; skipped=$((skipped+1)); continue
+      fi
+      [ "$(shasum -a 256 "$download" | awk '{print $1}')" = "$sha" ] || {
+        echo "   checksum mismatch — rejected"; skipped=$((skipped+1)); rm -f "$download"; continue
+      }
+      mount="$work/mount-$token"; mkdir -p "$mount"
+      if ! hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$download" >/dev/null 2>&1; then
+        echo "   not a mountable DMG — skipped"; skipped=$((skipped+1)); continue
+      fi
+      candidate="$(find "$mount" -maxdepth 4 -type d -name "$name" -print -quit 2>/dev/null)"
+      if [ -z "$candidate" ] || ! ut_verify_app_replacement "$app" "$candidate"; then
+        echo "   bundle ID, Team ID, version, codesign, or Gatekeeper check failed — rejected"
+        hdiutil detach "$mount" -quiet 2>/dev/null || true
+        skipped=$((skipped+1)); continue
+      fi
+      stage="$(dirname "$app")/.updatetools-stage-${token}-${cask_ver}.app"
+      case "$stage" in */.updatetools-stage-*.app) rm -rf "$stage" ;; *) continue ;; esac
+      if ! ditto "$candidate" "$stage"; then
+        hdiutil detach "$mount" -quiet 2>/dev/null || true
+        rm -rf "$stage"; skipped=$((skipped+1)); continue
+      fi
+      hdiutil detach "$mount" -quiet 2>/dev/null || true
+      ut_verify_app_replacement "$app" "$stage" || {
+        echo "   staged copy failed re-verification — rejected"
+        rm -rf "$stage"; skipped=$((skipped+1)); continue
+      }
+      ut_install_or_defer "$app" "$stage" "$bid"; rc=$?
+      case "$rc" in
+        0) echo "   installed atomically"; updated=$((updated+1)) ;;
+        3) echo "   app is running; will install after its natural exit"; deferred=$((deferred+1)) ;;
+        *) echo "   could not schedule installation; staged copy retained"; skipped=$((skipped+1)) ;;
+      esac
+      rm -f "$download"
+    done < <(find "$root" -maxdepth 1 -type d -name '*.app' -print0 2>/dev/null)
+  done <<< "$(printf '%s' "$roots" | tr ':' '\n')"
+  rm -rf "$work"
+  echo "manual apps: $found scanned · $managed Homebrew-managed · $matched updates matched · $updated installed · $deferred deferred · $skipped skipped"
   return 0
 }
 
@@ -925,7 +1199,6 @@ ut_icon_slug() {
     grafana*)                         echo grafana ;;
     ollama*)                          echo ollama ;;
     *"hugging face"*|huggingface*)    echo huggingface ;;
-    report*)                          echo report ;;
     *)                                echo "" ;;
   esac
 }
@@ -2614,6 +2887,7 @@ LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
 # ---------------------------------------------------------------------------
 STEPS=(
   "Homebrew · update everything¦have brew¦ut_update_homebrew_all"
+  "Applications · manual DMGs¦have brew && [ \"\$QUIET_APPS\" = \"1\" ]¦ut_update_manual_apps"
   "npm · global packages¦have npm¦npm_update_global"
   "pnpm · global packages¦have pnpm¦pnpm_update_global"
   "uv · self + tools¦have uv¦{ uv self update 2>/dev/null||brew upgrade uv 2>/dev/null; }; uv tool upgrade --all 2>/dev/null||true"
@@ -2932,6 +3206,14 @@ fi
 ut_report_begin
 
 # ---------------------------------------------------------------------------
+# Manually installed drag-and-drop apps
+# ---------------------------------------------------------------------------
+if [ "$QUIET_APPS" = "1" ] && have brew; then
+  section "Applications installed from DMGs"
+  ut_update_manual_apps
+fi
+
+# ---------------------------------------------------------------------------
 # Node / npm / npx
 # ---------------------------------------------------------------------------
 section "Node / npm / npx"
@@ -3118,6 +3400,10 @@ fi
 section "Done"
 
 }
+
+if [ "${UPDATETOOLS_LIB_ONLY:-0}" = "1" ]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 # ===========================================================================
 # Dispatch

@@ -42,6 +42,7 @@ Covered today:
 | Area | Tools |
 |------|-------|
 | Homebrew | `brew update`, formula & cask upgrades (greedy), autoremove, cleanup, `brew doctor` |
+| Direct-download apps | Strictly matched drag-and-drop `.app` bundles from DMGs, staged without quitting running apps |
 | Node ecosystem | `npm` globals, `pnpm`, `yarn`, `bun`, `deno` |
 | Python | `pipx`, `uv` (self + tools), `conda` |
 | Rust | `rustup`, `cargo install-update` |
@@ -77,6 +78,7 @@ updatetools --plain         # plain scrolling text output, no browser
 updatetools --macos         # ALSO install macOS + App Store updates (may reboot!)
 updatetools --plain --macos
 updatetools --no-greedy     # don't force-upgrade self-managing casks
+updatetools --no-manual-apps # skip apps installed manually from DMGs
 updatetools --help
 ```
 
@@ -94,6 +96,7 @@ without any flag.
 | `--macos`, `--all` | Install macOS **and** Mac App Store updates. Off by default. |
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
 | `--no-close` | Never close running apps — stage every cask upgrade with `--no-quit`. |
+| `--no-manual-apps` | Skip discovery and safe staging of manually installed DMG apps. |
 
 ### Environment toggles
 
@@ -103,10 +106,27 @@ without any flag.
 | `MACOS_UPDATES=1` | `--macos` |
 | `GREEDY=0` | `--no-greedy` |
 | `CLOSE_APPS=0` | `--no-close` |
+| `QUIET_APPS=0` | `--no-manual-apps` |
 | `DEBUG=1` | `--debug` |
 | `UPDATETOOLS_CLOSE="a b"` | Force-close these cask apps to upgrade them now (space/comma list of tokens). |
 | `UPDATETOOLS_PROTECT="a b"` | Never close these cask apps. |
 | `BREW_CASK_SKIP="a b"` | Casks needing an interactive sudo password — kept out of the run and reported for manual upgrade (default `stats aldente`). |
+
+## Apps installed from DMGs
+
+`updatetools` also scans `/Applications` and `~/Applications` for apps that were
+dragged from a downloaded DMG and are not managed by Homebrew or the App Store.
+It uses Homebrew Cask only as a download catalogue; it does not adopt the app or
+change package-manager ownership.
+
+The match must be unique and the replacement must be newer, have the expected
+SHA-256, keep the same bundle ID and Developer Team ID, and pass both `codesign`
+and Gatekeeper. Anything ambiguous or installer-based is skipped.
+
+If the app is open, the verified bundle is staged beside it and a detached
+one-shot helper waits for the user to close it naturally. The helper then uses
+an APFS atomic directory swap and removes itself. It never sends Quit events,
+relaunches applications, controls windows, or moves the pointer.
 
 ## Deciding which apps to close
 
@@ -161,7 +181,7 @@ them.
 The run has no terminal UI. It serves a page on `127.0.0.1` (random port), opens
 it in your default browser, and prints nothing. The page shows the plan before
 the run, live progress with per-step durations, and the version diff at the end;
-clicking a step opens that step's output. Passwords are asked for **in the page**
+hovering a step opens that step's output. Passwords are asked for **in the page**
 — nothing is echoed as you type — and the answer goes straight to `sudo`.
 
 Access is locked down: loopback only, a random per-run token exchanged for an
@@ -169,8 +189,10 @@ Access is locked down: loopback only, a random per-run token exchanged for an
 rebinding, and the token handed to the server through a `0600` file rather than
 argv. Closing the tab ends the run's server, and with it the run.
 
-Nothing is left on disk: the log and the HTML report live in a temp dir that goes
-away when the run ends. Pass `--debug` to keep both.
+The log and HTML report live in a temp dir that goes away when the run ends.
+A deferred DMG update temporarily leaves its verified staged app and one-shot
+helper on disk; both are removed after the natural app exit and atomic swap.
+Pass `--debug` to keep the log and report.
 
 
 ## Notes & gotchas
@@ -191,6 +213,7 @@ away when the run ends. Pass `--debug` to keep both.
 - macOS (Apple Silicon or Intel)
 - `bash` (the system `/bin/bash` is fine)
 - Homebrew recommended (most steps build on it)
+- Xcode Command Line Tools (already required by Homebrew; builds the tiny atomic-swap helper)
 
 ## License
 
