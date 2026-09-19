@@ -11,11 +11,12 @@
   </p>
 
   <p>
+    <a href="https://github.com/dekrezz/updatetools/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/dekrezz/updatetools?style=flat-square&color=7AA2FF"></a>
+    <a href="https://github.com/dekrezz/updatetools/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/dekrezz/updatetools?style=flat-square&color=67E8C4"></a>
     <img alt="macOS" src="https://img.shields.io/badge/macOS-12%2B-11151D?logo=apple&logoColor=white">
     <img alt="Bash" src="https://img.shields.io/badge/Bash-3.2%2B-4EAA25?logo=gnubash&logoColor=white">
     <img alt="Homebrew" src="https://img.shields.io/badge/Homebrew-ready-FBB040?logo=homebrew&logoColor=11151D">
-    <img alt="Single script" src="https://img.shields.io/badge/install-single_script-7AA2FF">
-    <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-67E8C4">
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/dekrezz/updatetools?style=flat-square&color=67E8C4"></a>
   </p>
 
   <p>
