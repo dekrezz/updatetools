@@ -123,7 +123,10 @@ change package-manager ownership.
 
 The match must be unique and the replacement must be newer, have the expected
 SHA-256, keep the same bundle ID and Developer Team ID, and pass both `codesign`
-and Gatekeeper. Anything ambiguous or installer-based is skipped.
+and Gatekeeper. An app is touched only when macOS still records a `.dmg`
+download source. Apps that update themselves (Sparkle, Mozilla/Tor) or have no
+DMG provenance are left alone. If nothing needs a DMG update, the step reports
+that everything is already up to date.
 
 If the app is open, the verified bundle is staged beside it and a detached
 one-shot helper waits for the user to close it naturally. The helper then uses

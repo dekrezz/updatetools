@@ -79,6 +79,18 @@ assert_not_contains "manual updater never sends quit events" "$manual_impl" "gra
 assert_not_contains "manual updater never relaunches apps" "$manual_impl" "relaunch_app"
 assert_not_contains "manual updater never uses AppleScript" "$manual_impl" "osascript"
 
+assert_true "https DMG URL is accepted" ut_urls_look_like_dmg "https://example.test/App-1.2.dmg"
+assert_false "empty source is not a DMG" ut_urls_look_like_dmg ""
+assert_false "null Spotlight value is not a DMG" ut_urls_look_like_dmg "(null)"
+assert_false "non-DMG URL is rejected" ut_urls_look_like_dmg "https://example.test/App.pkg"
+
+mkdir -p "$tmp/sparkle.app/Contents/Frameworks/Sparkle.framework" \
+         "$tmp/mozilla.app/Contents/MacOS/updater.app"
+assert_true "Sparkle framework is a self-updater" ut_app_self_updates "$tmp/sparkle.app"
+assert_true "Mozilla updater.app is a self-updater" ut_app_self_updates "$tmp/mozilla.app"
+assert_false "plain app is not a self-updater" ut_app_self_updates "$tmp/installed.app"
+assert_false "missing app is not from a DMG" ut_app_from_dmg "$tmp/missing.app"
+
 mkdir -p "$tmp/apps/Alpha.app/Contents"
 cat > "$tmp/apps/Alpha.app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -102,13 +114,33 @@ UPDATETOOLS_MANUAL_APPS_DRY_RUN=1
 export UPDATETOOLS_APP_ROOTS UPDATETOOLS_CASK_CATALOG UPDATETOOLS_MANUAL_APPS_DRY_RUN
 scan_output="$(ut_update_manual_apps)"
 case "$scan_output" in
-  *"Alpha.app: 1.0 → 1.1 (would stage verified DMG)"*) pass "dry-run scans a manual app update" ;;
-  *) fail "dry-run scans a manual app update" ;;
+  *"not installed from a DMG"*) pass "dry-run leaves non-DMG apps alone" ;;
+  *) fail "dry-run leaves non-DMG apps alone: $scan_output" ;;
+esac
+assert_not_contains "dry-run does not stage non-DMG apps" "$scan_output" "would stage verified DMG"
+case "$scan_output" in
+  *"already up to date"*) pass "dry-run reports already up to date" ;;
+  *) fail "dry-run reports already up to date: $scan_output" ;;
+esac
+
+ut_app_from_dmg() { return 0; }
+scan_output="$(ut_update_manual_apps)"
+case "$scan_output" in
+  *"Alpha.app: 1.0 → 1.1 (would stage verified DMG)"*) pass "dry-run scans a DMG app update" ;;
+  *) fail "dry-run scans a DMG app update: $scan_output" ;;
 esac
 case "$scan_output" in
   *"1 updates matched"*) pass "dry-run reports one strict match" ;;
-  *) fail "dry-run reports one strict match" ;;
+  *) fail "dry-run reports one strict match: $scan_output" ;;
 esac
+
+mkdir -p "$tmp/apps/Alpha.app/Contents/MacOS/updater.app"
+scan_output="$(ut_update_manual_apps)"
+case "$scan_output" in
+  *"updates itself"*) pass "dry-run leaves self-updating apps alone" ;;
+  *) fail "dry-run leaves self-updating apps alone: $scan_output" ;;
+esac
+assert_not_contains "self-updating apps are not staged" "$scan_output" "would stage verified DMG"
 
 if [ "$failures" -ne 0 ]; then
   printf '%s test(s) failed\n' "$failures" >&2
