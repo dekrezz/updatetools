@@ -25,6 +25,8 @@
     <a href="#usage">Usage</a> ·
     <a href="#the-dashboard">Dashboard</a> ·
     <a href="#the-report">Report</a> ·
+    <a href="CONTRIBUTING.md">Contributing</a> ·
+    <a href="SECURITY.md">Security</a> ·
     <a href="#license">License</a>
   </p>
 </div>

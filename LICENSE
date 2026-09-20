@@ -16,6 +16,12 @@ advantage or monetary compensation.
 paid product or service, client work, revenue-generating activity, or internal
 business operation.
 
+"Contribution" means any original work, modification, or addition
+intentionally submitted to the Project for inclusion in the Software.
+
+"Contributor" means the copyright owner, or a person or entity authorized by
+the copyright owner, who submits a Contribution.
+
 2. Personal Use
 
 Permission is granted, free of charge, to use, copy, modify, and redistribute
@@ -56,13 +62,24 @@ Redistribution for Commercial Use must also satisfy Section 3.
 The names "mythler" and "updatetools" may not be used to state or imply
 endorsement of a derived product or service without prior written permission.
 
-6. Termination
+6. Contributions
+
+Unless explicitly stated otherwise in writing at the time of submission, each
+Contribution intentionally submitted for inclusion in the Software is provided
+under the terms of this license without additional or different terms.
+
+Each Contributor retains copyright in their Contribution and represents that
+they have the legal right to submit and license it. Nothing in this section
+supersedes a separate written license agreement between the Project and a
+Contributor.
+
+7. Termination
 
 Any license granted here terminates automatically upon violation of these
 terms. It is reinstated if the violation is cured within 30 days after its
 discovery.
 
-7. Disclaimer
+8. Disclaimer
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
