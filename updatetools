@@ -2463,7 +2463,8 @@ WEB_HTML_HEAD
 
   /* ── per-step output: the log is one file, split on the run's own banners ─── */
   const hoverLogs = matchMedia('(hover: hover) and (pointer: fine)').matches;
-  let activeLogEl = null, logToken = 0;
+  let activeLogEl = null, logToken = 0, openedAt = 0;
+  let hoverEl = null, hoverOpenTimer = 0;
   let logText = '', logAt = 0;
   async function fetchLog() {
     if (Date.now() - logAt < 800) return logText;
@@ -2575,16 +2576,22 @@ WEB_HTML_HEAD
     note.innerHTML = `<div class="note-in"><div class="log-md"></div></div>`;
     note.querySelector('.log-md').innerHTML = renderMiniMarkdown(md);
     el.appendChild(note);
+    openedAt = Date.now();
     requestAnimationFrame(() => note.classList.add('on'));
   }
-  function hideStepLog(el = activeLogEl) {
+  function hideStepLog(el = activeLogEl, instant = false) {
     if (!el) return;
     logToken++;
-    el.querySelector('.note')?.remove();
+    const note = el.querySelector('.note');
     el.classList.remove('open');
-    if (activeLogEl === el) {
-      activeLogEl = null;
-    }
+    if (activeLogEl === el) activeLogEl = null;
+    if (!note) return;
+    const young = Date.now() - openedAt < 280;
+    if (instant || young || reduce) { note.remove(); return; }
+    note.classList.remove('on');
+    const drop = () => { if (note.isConnected) note.remove(); };
+    note.addEventListener('transitionend', drop, { once: true });
+    setTimeout(drop, 380);
   }
   function toggleStepLog(el, label) {
     if (activeLogEl === el) hideStepLog(el);
@@ -2753,12 +2760,23 @@ WEB_HTML_HEAD
   $('steps').addEventListener('pointerover', (e) => {
     const el = e.target.closest('.step');
     if (!hoverLogs || !el || el.contains(e.relatedTarget)) return;
-    showStepLog(el, el.dataset.label);
+    clearTimeout(hoverOpenTimer);
+    hoverEl = el;
+    if (activeLogEl === el) return;
+    hoverOpenTimer = setTimeout(() => {
+      hoverOpenTimer = 0;
+      if (hoverEl === el && el.isConnected) showStepLog(el, el.dataset.label);
+    }, 160);
   });
   $('steps').addEventListener('pointerout', (e) => {
     const el = e.target.closest('.step');
     if (!hoverLogs || !el || el.contains(e.relatedTarget)) return;
-    hideStepLog(el);
+    if (hoverEl === el) {
+      hoverEl = null;
+      clearTimeout(hoverOpenTimer);
+      hoverOpenTimer = 0;
+    }
+    if (activeLogEl === el) hideStepLog(el);
   });
   $('steps').addEventListener('wheel', (e) => {
     const box = e.target.closest('.log-md');
