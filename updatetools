@@ -2021,19 +2021,23 @@ ut_web_page() {
   }
   .card .name{font-weight:600}
   .ver{
-    display:inline-grid; grid-template-columns:auto auto; column-gap:.02em;
-    align-items:end; justify-items:start;
+    display:inline-flex; align-items:center; gap:.5rem;
     font-family:var(--mono); font-size:.8125rem; font-variant-numeric:tabular-nums;
-    line-height:1.05; white-space:nowrap;
+    white-space:nowrap;
   }
-  .ver .stem{grid-column:1; grid-row:2; color:var(--text-2)}
-  .ver .swap{grid-column:2; grid-row:1 / span 2; display:flex; flex-direction:column; align-items:flex-start; gap:.12rem}
-  .ver .old{
-    color:var(--text-3); font-size:.68rem; line-height:1;
+  .ver .from{color:var(--text-3)}
+  .ver .from em{
+    font-style:normal; font-weight:500;
     text-decoration:line-through;
-    text-decoration-color:color-mix(in oklab, var(--text-3) 50%, transparent);
+    text-decoration-color:color-mix(in oklab, var(--text-3) 65%, transparent);
   }
-  .ver .new{color:var(--text); font-weight:600}
+  .ver .to{color:var(--text-2)}
+  .ver .to em{font-style:normal; color:var(--text); font-weight:650}
+  .ver .step{
+    width:.55rem; height:.55rem; flex:none; color:var(--text-3);
+    border-right:1.5px solid currentColor; border-top:1.5px solid currentColor;
+    transform:rotate(45deg); margin-right:.15rem;
+  }
   /* Files: a path is something you copy or open, so give it affordances rather
      than printing it as loose grey text. */
   .files{margin-top:1.75rem; display:flex; flex-direction:column; gap:.5rem}
@@ -2522,22 +2526,18 @@ WEB_HTML_HEAD
     }
     return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   }
-  function versionMove(oldV, newV) {
+  function versionMarkup(oldV, newV) {
     const oldS = String(oldV ?? '');
     const newS = String(newV ?? '');
     const a = oldS.split('.');
     const b = newS.split('.');
     let i = 0;
     while (i < a.length && i < b.length && a[i] === b[i]) i++;
-    if (!i) return { stem: '', oldTail: oldS, newTail: newS };
-    const oldTail = a.slice(i).join('.');
-    const newTail = b.slice(i).join('.');
-    return { stem: a.slice(0, i).join('.') + '.', oldTail, newTail };
-  }
-  function versionMarkup(oldV, newV) {
-    const { stem, oldTail, newTail } = versionMove(oldV, newV);
-    const oldHtml = oldTail ? `<span class="old">${escapeHtml(oldTail)}</span>` : '';
-    return `<span class="ver" aria-label="${escapeHtml(String(oldV))} to ${escapeHtml(String(newV))}">${stem ? `<span class="stem">${escapeHtml(stem)}</span>` : ''}<span class="swap">${oldHtml}<span class="new">${escapeHtml(newTail)}</span></span></span>`;
+    const paint = (parts) => parts.map((part, idx) => {
+      const bit = idx >= i ? `<em>${escapeHtml(part)}</em>` : escapeHtml(part);
+      return (idx ? '.' : '') + bit;
+    }).join('');
+    return `<span class="ver" aria-label="${escapeHtml(oldS)} to ${escapeHtml(newS)}"><span class="from">${paint(a)}</span><span class="step" aria-hidden="true"></span><span class="to">${paint(b)}</span></span>`;
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
