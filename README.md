@@ -16,7 +16,7 @@
     <img alt="macOS" src="https://img.shields.io/badge/macOS-12%2B-11151D?logo=apple&logoColor=white">
     <img alt="Bash" src="https://img.shields.io/badge/Bash-3.2%2B-4EAA25?logo=gnubash&logoColor=white">
     <img alt="Homebrew" src="https://img.shields.io/badge/Homebrew-ready-FBB040?logo=homebrew&logoColor=11151D">
-    <a href="LICENSE"><img alt="License: personal use and commercial attribution" src="https://img.shields.io/badge/license-personal_use_%2B_commercial_attribution-67E8C4?style=flat-square"></a>
+    <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache_2.0-67E8C4?style=flat-square"></a>
   </p>
 
   <p>
@@ -222,8 +222,4 @@ Pass `--debug` to keep the log and report.
 
 ## License
 
-Personal use is free. Commercial use is allowed only with prominent attribution:
-
-> Uses updatetools by mythler — https://github.com/dekrezz/updatetools
-
-See the [Personal Use and Commercial Attribution License 1.0](LICENSE).
+Licensed under the [Apache License, Version 2.0](LICENSE).

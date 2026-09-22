@@ -42,9 +42,8 @@ request.
 ## Contribution license
 
 By intentionally submitting a contribution for inclusion in updatetools, you
-agree to license that contribution under the repository's
-[Personal Use and Commercial Attribution License 1.0](LICENSE), as described
-in its Contributions section.
+agree to license that contribution under the
+[Apache License, Version 2.0](LICENSE).
 
 You retain copyright in your contribution and represent that you have the
 legal right to submit and license it. If your employer or another party owns
