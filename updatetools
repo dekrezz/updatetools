@@ -1903,6 +1903,7 @@ ut_web_page() {
   /* Output floats above the list so it never covers the next step. */
   .log-popover{
     position:absolute; z-index:30; left:3.7rem; right:.75rem; top:auto; bottom:calc(100% + .35rem);
+    display:flex; flex-direction:column; box-sizing:border-box; overflow:hidden;
     padding:.85rem 1rem .95rem; border:1px solid var(--hairline-strong);
     border-radius:16px; background:rgba(18,21,27,.96);
     box-shadow:0 18px 48px -20px rgba(0,0,0,.75);
@@ -1916,11 +1917,14 @@ ut_web_page() {
   }
   @keyframes popover-in{from{opacity:0;transform:translateY(6px) scale(.985)}}
   .log-head{
-    display:flex; align-items:center; gap:.5rem; margin-bottom:.55rem;
+    display:flex; align-items:center; gap:.5rem; margin-bottom:.55rem; flex:none;
     color:var(--text-2); font-size:.75rem; font-weight:500;
   }
   .log-head svg{width:.9rem;height:.9rem;color:var(--text-3)}
-  .log-md{margin:0; max-height:14rem; overflow:auto; color:var(--text); font:400 .875rem/1.5 var(--display)}
+  .log-md{
+    margin:0; min-height:0; overflow:auto; overflow-wrap:anywhere;
+    color:var(--text); font:400 .875rem/1.5 var(--display);
+  }
   .log-md h4{margin:0 0 .45rem; font-size:1rem; font-weight:600; letter-spacing:-.02em}
   .log-md h5{margin:.7rem 0 .35rem; font-size:.75rem; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--text-3)}
   .log-md p{margin:.2rem 0 .45rem; color:var(--text-2)}
@@ -2555,6 +2559,17 @@ WEB_HTML_HEAD
     panel.querySelector('.log-head span').textContent = isReport ? 'Report' : label;
     panel.querySelector('.log-md').innerHTML = renderMiniMarkdown(md);
     el.appendChild(panel);
+    fitLogPopover(el, panel);
+  }
+  function fitLogPopover(el, panel) {
+    const row = el.getBoundingClientRect();
+    const space = Math.max(88, row.top - 12);
+    panel.style.maxHeight = space + 'px';
+    const body = panel.querySelector('.log-md');
+    const head = panel.querySelector('.log-head');
+    const chrome = (head ? head.offsetHeight : 0) + 28;
+    body.style.maxHeight = Math.max(40, space - chrome) + 'px';
+    body.scrollTop = 0;
   }
   function hideStepLog(el = activeLogEl) {
     if (!el) return;
@@ -2728,6 +2743,13 @@ WEB_HTML_HEAD
   infoBtn.addEventListener('mouseleave', () => tipOn(false));
   infoBtn.addEventListener('focus', () => tipOn(true));
   infoBtn.addEventListener('blur', () => tipOn(false));
+
+  const refitLog = () => {
+    const panel = activeLogEl && activeLogEl.querySelector('.log-popover');
+    if (panel) fitLogPopover(activeLogEl, panel);
+  };
+  window.addEventListener('scroll', refitLog, true);
+  window.addEventListener('resize', refitLog);
 
   $('steps').addEventListener('pointerover', (e) => {
     const el = e.target.closest('.step');
