@@ -1984,13 +1984,30 @@ ut_web_page() {
   .verdict.warn .mark{background:color-mix(in oklab,var(--warn) 18%,transparent); color:var(--warn)}
   .verdict .mark svg{width:1.5rem; height:1.5rem}
   .headline{font-size:1.625rem; font-weight:700; letter-spacing:-.025em; margin:0; line-height:1.1}
-  .sub{margin:.25rem 0 0; color:var(--text-2); font-size:.9375rem}
   .record{
-    margin-top:1.75rem; border:1px solid var(--hairline-strong); background:transparent;
-    color:var(--text); font:inherit; font-size:.9375rem; padding:.7rem 1.1rem;
-    border-radius:999px; cursor:pointer;
+    margin-top:1.75rem; width:100%; display:flex; align-items:center; gap:1rem;
+    appearance:none; border:0; cursor:pointer; text-align:left;
+    background:#f3eee4; color:#221e19;
+    padding:.55rem 1.05rem .55rem .55rem; border-radius:18px;
+    box-shadow:0 1px 0 rgba(34,30,25,.08), 0 16px 36px rgba(0,0,0,.32);
+    font-family:var(--sans);
   }
-  .record:hover{border-color:var(--text-2)}
+  .record b{
+    min-width:3.5rem; height:3.5rem; padding:0 .4rem;
+    display:grid; place-items:center; border-radius:14px; flex:none;
+    background:#9a3412; color:#f3eee4;
+    font:500 2rem/1 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    letter-spacing:-.04em; font-variant-numeric:tabular-nums;
+  }
+  .record span{
+    font:650 .78rem/1 var(--sans); letter-spacing:.18em; text-transform:uppercase;
+  }
+  .record svg{width:1.2rem; height:1.2rem; display:block; margin-left:auto; flex:none; transition:transform .18s ease}
+  .record:hover svg{transform:translateX(4px)}
+  .record:focus-visible{outline:2px solid #9a3412; outline-offset:3px}
+  @media (prefers-color-scheme: light){
+    .record{box-shadow:0 1px 0 rgba(34,30,25,.05), 0 12px 28px rgba(34,30,25,.14)}
+  }
   .ledger{
     --ink:#221e19; --paper:#f3eee4; --rule:rgba(34,30,25,.16); --rust:#9a3412; --dust:#8a8175;
     position:fixed; inset:0; z-index:40; overflow:auto;
@@ -2000,7 +2017,9 @@ ut_web_page() {
     clip-path:inset(0 0 0 100%);
   }
   .ledger.show{animation:buff .48s cubic-bezier(.65,0,.2,1) forwards}
-  @keyframes buff{to{clip-path:inset(0)}}
+  .ledger.hide{animation:unbuff .48s cubic-bezier(.65,0,.2,1) forwards}
+  @keyframes buff{from{clip-path:inset(0 0 0 100%)} to{clip-path:inset(0)}}
+  @keyframes unbuff{from{clip-path:inset(0)} to{clip-path:inset(0 0 0 100%)}}
   .ledger-top{display:flex; align-items:flex-end; justify-content:space-between; gap:1.5rem 2rem; flex-wrap:wrap}
   .ledger-back{
     appearance:none; border:0; background:none; padding:0; cursor:pointer;
@@ -2236,8 +2255,8 @@ ut_web_page() {
   @media (prefers-reduced-motion: reduce){
     .step.run .step-state svg{animation:none}
     .wrap,.step,.step.done .step-state svg{animation:none;opacity:1;transform:none}
-    .info-tip,.note,.report-panel,.ledger.show{transition:none;animation:none;filter:none;transform:none}
-    .ledger.show{clip-path:none}
+    .info-tip,.note,.report-panel,.ledger.show,.ledger.hide,.record svg{transition:none;animation:none;filter:none;transform:none}
+    .ledger.show,.ledger.hide{clip-path:none}
   }
   @media (prefers-reduced-transparency: reduce){
     .card,.pill,.step.run{background:var(--bg-tint); backdrop-filter:none; -webkit-backdrop-filter:none}
@@ -2290,10 +2309,7 @@ ut_web_page() {
       <div class="rule"></div>
       <div class="verdict" id="verdict">
         <span class="mark" id="r-mark"></span>
-        <span>
-          <h2 class="headline" id="r-head">All done</h2>
-          <p class="sub" id="r-sub"></p>
-        </span>
+        <h2 class="headline" id="r-head">All done</h2>
       </div>
       <button type="button" class="record" id="open-ledger">Open the record</button>
     </section>
@@ -2503,14 +2519,18 @@ WEB_HTML_HEAD
       $('r-head').textContent = total_fail ? 'Nothing could be updated'
         : failed ? `Done, ${st.fail} step${st.fail === 1 ? '' : 's'} needs attention`
         : 'Your Mac is up to date';
-      $('r-sub').textContent =
-        `${st.done} steps completed · ${st.skip} skipped${failed ? ` · ${st.fail} failed` : ''} · took ${fmt(st.elapsed)}`;
 
       const ups = st.updates || [];
-      const moved = ups.length
-        ? `${ups.length} ${ups.length === 1 ? 'tool moved' : 'tools moved'}`
-        : 'Nothing moved';
-      $('open-ledger').textContent = moved;
+      const moved = ups.length;
+      const ticket = moved ? String(moved) : 'none';
+      if ($('open-ledger').dataset.ticket !== ticket) {
+        $('open-ledger').dataset.ticket = ticket;
+        const label = moved === 1 ? 'tool moved' : moved ? 'tools moved' : 'Nothing moved';
+        const arrow = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>`;
+        $('open-ledger').innerHTML = moved
+          ? `<b>${moved}</b><span>${label}</span>${arrow}`
+          : `<span>${label}</span>${arrow}`;
+      }
       $('ledger-facts').innerHTML = [
         [st.done, 'completed'],
         [st.skip, 'skipped'],
@@ -2540,14 +2560,19 @@ WEB_HTML_HEAD
   function openLedger() {
     const el = $('ledger');
     el.hidden = false;
-    el.classList.remove('show');
+    el.classList.remove('hide', 'show');
     void el.offsetWidth;
     el.classList.add('show');
   }
   function closeLedger() {
     const el = $('ledger');
-    el.hidden = true;
+    if (el.hidden || el.classList.contains('hide')) return;
+    el.classList.add('hide');
     el.classList.remove('show');
+    if (reduce) {
+      el.hidden = true;
+      el.classList.remove('hide');
+    }
   }
   let logText = '', logAt = 0;
   async function fetchLog() {
@@ -2892,6 +2917,13 @@ WEB_HTML_HEAD
   let misses = 0;
   $('open-ledger').addEventListener('click', openLedger);
   $('ledger-back').addEventListener('click', closeLedger);
+  $('ledger').addEventListener('animationend', (e) => {
+    if (e.animationName !== 'unbuff') return;
+    const el = $('ledger');
+    if (!el.classList.contains('hide')) return;
+    el.hidden = true;
+    el.classList.remove('hide');
+  });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !$('ledger').hidden) closeLedger();
   });
