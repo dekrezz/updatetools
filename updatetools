@@ -1851,46 +1851,46 @@ try {
   }
   @keyframes app-in{from{opacity:0;transform:translateY(8px)}}
 
-  .masthead{padding:0 0 2rem; text-align:center}
+  /* The header is the run itself: the clock, and a ribbon where every step
+     takes the width of the time it actually spent. */
+  .masthead{padding:0 0 2.25rem}
+  .mast-row{display:flex; align-items:baseline; justify-content:space-between; gap:1rem}
   h1{
-    margin:0; font-size:clamp(1.75rem,1.4rem + 1.5vw,2.35rem); line-height:1;
-    letter-spacing:-.035em; font-weight:500; color:var(--text);
+    margin:0; font-size:1rem; line-height:1;
+    letter-spacing:-.02em; font-weight:600; color:var(--text);
   }
-  .meta{
-    margin:.75rem 0 0; font-size:.9375rem; color:var(--text-2);
-    display:flex; align-items:baseline; justify-content:center; gap:.5rem; flex-wrap:wrap;
+  .phase{color:var(--text-3); font-size:.875rem; font-variant-numeric:tabular-nums}
+  .clock{
+    margin:1.1rem 0 0; color:var(--text);
+    font:400 clamp(4.5rem,15vw,8.5rem)/.82 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    letter-spacing:-.055em; font-variant-numeric:tabular-nums lining-nums;
   }
-  .meta strong{color:var(--text); font-weight:500; font-variant-numeric:tabular-nums}
-  .meta .sep{color:var(--text-3)}
-  .meta .clock{font-variant-numeric:tabular-nums; letter-spacing:0}
-
-  /* ── progress ──────────────────────────────────────────────────────────── */
-  .progress{max-width:38rem; margin:1.5rem auto 0}
-  .track{
-    height:.3rem; border-radius:999px; background:var(--surface-2); overflow:hidden;
+  .ribbon{
+    display:flex; gap:3px; height:2.25rem; margin:1.6rem 0 0;
   }
-  .fill{
-    height:100%; width:0; border-radius:999px; background:var(--text);
-    /* width is spring-driven from JS; no CSS transition, so it stays interruptible */
+  .seg{
+    flex:1 1 0; min-width:2.25rem; border-radius:7px;
+    display:grid; place-items:center; overflow:hidden;
+    background:var(--plate); color:var(--text-3);
+    transition:flex-grow .6s cubic-bezier(.2,.8,.2,1), background-color .3s ease;
   }
-  /* Counters: an icon, a number, a word — on one line, no plate around them.
-     A bordered grid with uppercase labels read like a terminal table; this reads
-     like a status line. Zero counts stay quiet instead of demanding attention. */
-  .stats{display:flex; align-items:center; justify-content:center; gap:1.25rem; margin-top:1rem; flex-wrap:wrap}
-  .stat{
-    display:inline-flex; align-items:center; gap:.5rem; min-width:0;
-    color:var(--text-3); transition:opacity .3s ease;
+  .seg .logo{width:1.35rem; height:1.35rem; background:none; border-radius:0; opacity:.9}
+  .seg .logo svg,.seg .logo img{width:1rem; height:1rem}
+  .seg.pending{opacity:.55}
+  .seg.done{background:var(--plate-2)}
+  .seg.skip{background:repeating-linear-gradient(135deg,var(--plate) 0 5px,transparent 5px 9px)}
+  .seg.fail{background:color-mix(in oklab,var(--bad) 22%,var(--plate))}
+  .seg.run{
+    background:linear-gradient(90deg,var(--plate-2) 0 40%,var(--surface) 50%,var(--plate-2) 60% 100%);
+    background-size:250% 100%; animation:seg-run 1.6s linear infinite;
+    box-shadow:inset 0 0 0 1.5px var(--text);
   }
-  .stat:not(.has){opacity:.45}
-  .stat svg{width:1.125rem; height:1.125rem; flex:none}
-  .stat.ok.has  svg{color:var(--ok)}
-  .stat.bad.has svg{color:var(--bad)}
-  .stat .v{
-    font-size:1.125rem; font-weight:650; letter-spacing:-.01em;
-    font-variant-numeric:tabular-nums; color:var(--text-3);
+  @keyframes seg-run{from{background-position:100% 0}to{background-position:-150% 0}}
+  .tally{
+    margin:.7rem 0 0; color:var(--text-3); font-size:.8125rem; letter-spacing:.01em;
+    font-variant-numeric:tabular-nums;
   }
-  .stat.has .v{color:var(--text)}
-  .stat .k{font-size:.9375rem; color:var(--text-3)}
+  .tally b{color:var(--text); font-weight:600}
 
   /* ── steps: app list, deliberately not a terminal timeline ─────────────── */
   .steps{
@@ -2277,6 +2277,8 @@ try {
     .wrap,.step,.step.done .step-state svg{animation:none;opacity:1;transform:none}
     .info-tip,.note,.report-panel,.ledger.show,.ledger.hide,.record svg{transition:none;animation:none;filter:none;transform:none}
     .ledger.show,.ledger.hide{clip-path:none}
+    .seg{transition:none}
+    .seg.run{animation:none}
   }
   @media (prefers-reduced-transparency: reduce){
     .card,.pill,.step.run{background:var(--bg-tint); backdrop-filter:none; -webkit-backdrop-filter:none}
@@ -2291,7 +2293,8 @@ try {
     .wrap{padding:4.25rem 1rem 4rem}
     .masthead{padding:0 0 1.25rem}
     .step{padding:.72rem .65rem}
-    .stats{gap:.85rem}
+    .seg{min-width:1.5rem}
+    .seg .logo{display:none}
     .theme-switch{top:.6rem; right:.6rem}
   }
 </style>
@@ -2310,29 +2313,13 @@ try {
   </div>
   <div class="wrap">
     <header class="masthead">
-      <h1>updatetools</h1>
-      <p class="meta">
-        <strong id="phase">starting…</strong>
-        <span class="sep">·</span>
-        <span class="clock" id="clock">00:00</span>
-      </p>
-      <div class="progress">
-        <div class="track"><div class="fill" id="fill"></div></div>
-        <div class="stats">
-          <div class="stat ok" id="s-done">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8.25 12.25 2.5 2.5 5-5.5"/></svg>
-            <span class="v" id="c-done">0</span><span class="k">done</span>
-          </div>
-          <div class="stat skip" id="s-skip">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 12h7"/></svg>
-            <span class="v" id="c-skip">0</span><span class="k">skipped</span>
-          </div>
-          <div class="stat bad" id="s-fail">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9.25 9.25 5.5 5.5M14.75 9.25l-5.5 5.5"/></svg>
-            <span class="v" id="c-fail">0</span><span class="k">failed</span>
-          </div>
-        </div>
+      <div class="mast-row">
+        <h1>updatetools</h1>
+        <span class="phase" id="phase">starting…</span>
       </div>
+      <div class="clock" id="clock" aria-live="off">00:00</div>
+      <div class="ribbon" id="ribbon" aria-hidden="true"></div>
+      <p class="tally" id="tally"></p>
     </header>
 
     <section class="steps" id="steps"></section>
@@ -2422,20 +2409,6 @@ WEB_HTML_HEAD
     });
   });
 
-  /* critically-damped spring, started from the live value — same behaviour the
-     terminal bar had, minus the character grid */
-  function spring(get, set, target, response = 0.5) {
-    if (reduce) { set(target); return; }
-    const w = (2 * Math.PI) / response;
-    let x = get() - target, v = 0, last = performance.now();
-    const tick = (now) => {
-      const dt = Math.min((now - last) / 1000, 1 / 30); last = now;
-      v += (-w * w * x - 2 * w * v) * dt; x += v * dt;
-      if (Math.abs(x) < 0.001 && Math.abs(v) < 0.001) { set(target); return; }
-      set(target + x); requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }
 
   const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
   const dur = (s) => (s == null ? '' : s < 60 ? `${s}s` : fmt(s));
@@ -2491,7 +2464,31 @@ WEB_HTML_HEAD
         </div>`;
   }
 
-  let barPct = 0, lastSig = '', stepsReadyTimer = 0;
+  function paintRibbon(st) {
+    const rib = $('ribbon');
+    const steps = st.steps || [];
+    const spent = (s) => s.s === 'run'
+      ? Math.max(1, st.elapsed - (s.b ?? st.elapsed))
+      : (s.t ?? 0);
+    const known = steps.filter((s) => s.s !== 'pending').map(spent);
+    const typical = known.length ? known.reduce((a, b) => a + b, 0) / known.length : 1;
+    steps.forEach((s, i) => {
+      let seg = rib.children[i];
+      if (!seg || seg.dataset.slug !== (s.slug || '')) {
+        const fresh = document.createElement('span');
+        fresh.dataset.slug = s.slug || '';
+        fresh.title = s.n;
+        fresh.innerHTML = logo(s.slug, s.img, s.n);
+        if (seg) seg.replaceWith(fresh); else rib.appendChild(fresh);
+        seg = fresh;
+      }
+      seg.className = `seg ${s.s}`;
+      seg.style.flexGrow = String(Math.max(1, s.s === 'pending' ? typical : spent(s)));
+    });
+    while (rib.children.length > steps.length) rib.lastElementChild.remove();
+  }
+
+  let lastSig = '', stepsReadyTimer = 0;
   let latestUpdates = [], latestPhase = 'run';
   function render(st) {
     latestUpdates = st.updates || [];
@@ -2501,13 +2498,12 @@ WEB_HTML_HEAD
       st.phase === 'done' ? (st.fail ? `${st.done} updated, ${st.fail} failed` : `${st.done} steps completed`)
                           : `${st.done + st.skip + st.fail} of ${st.total} steps`;
     $('clock').textContent = fmt(st.elapsed || 0);
-    for (const [k, n] of [['done', st.done], ['skip', st.skip], ['fail', st.fail]]) {
-      $('c-' + k).textContent = n;
-      $('s-' + k).classList.toggle('has', n > 0);   // zero stays quiet, grey
-    }
-
-    const pct = st.total ? ((st.done + st.skip + st.fail) / st.total) * 100 : 0;
-    spring(() => barPct, (v) => { barPct = v; $('fill').style.width = v + '%'; }, pct, 0.5);
+    $('tally').innerHTML = [
+      `<b>${st.done}</b> done`,
+      `<b>${st.skip}</b> skipped`,
+      ...(st.fail ? [`<b>${st.fail}</b> failed`] : []),
+    ].join(' &nbsp;·&nbsp; ');
+    paintRibbon(st);
 
     // Patch only rows that changed. Rebuilding the whole list made every status
     // transition visibly flash and restarted all entrance animations.
