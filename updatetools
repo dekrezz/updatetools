@@ -1899,31 +1899,21 @@ ut_web_page() {
   .step + .step{margin-top:.15rem}
   .step:hover{background:var(--surface)}
   .step:active{transform:scale(.995)}
-  .step.has-popover{z-index:20; background:var(--surface); border-color:var(--hairline)}
-  /* Output floats above the list so it never covers the next step. */
-  .log-popover{
-    position:absolute; z-index:30; left:3.7rem; right:.75rem; top:auto; bottom:calc(100% + .35rem);
-    display:flex; flex-direction:column; box-sizing:border-box; overflow:hidden;
-    padding:.85rem 1rem .95rem; border:1px solid var(--hairline-strong);
-    border-radius:16px; background:rgba(18,21,27,.96);
-    box-shadow:0 18px 48px -20px rgba(0,0,0,.75);
-    backdrop-filter:blur(18px) saturate(150%);
-    -webkit-backdrop-filter:blur(18px) saturate(150%);
-    transform-origin:bottom center;
-    animation:popover-in .18s cubic-bezier(.2,.8,.2,1) both;
+  .step.open{background:var(--surface)}
+  /* The row itself opens. Nielsen Norman Group: an accordion pushes the next
+     rows down instead of covering them. Apple HIG: a disclosure expands in place. */
+  .note{
+    grid-column:2 / -1;
+    display:grid; grid-template-rows:0fr;
+    transition:grid-template-rows .32s cubic-bezier(.2,.8,.2,1);
   }
-  @media (prefers-color-scheme: light){
-    .log-popover{background:rgba(255,255,255,.96);box-shadow:0 18px 48px -24px rgba(16,20,40,.25)}
-  }
-  @keyframes popover-in{from{opacity:0;transform:translateY(6px) scale(.985)}}
-  .log-head{
-    display:flex; align-items:center; gap:.5rem; margin-bottom:.55rem; flex:none;
-    color:var(--text-2); font-size:.75rem; font-weight:500;
-  }
-  .log-head svg{width:.9rem;height:.9rem;color:var(--text-3)}
+  .note.on{grid-template-rows:1fr}
+  .note-in{overflow:hidden; min-height:0}
   .log-md{
-    margin:0; min-height:0; overflow:auto; overflow-wrap:anywhere;
-    color:var(--text); font:400 .875rem/1.5 var(--display);
+    margin:.35rem 0 .15rem; padding:0 0 .05rem .75rem;
+    border-left:2px solid color-mix(in oklab, var(--text-3) 40%, transparent);
+    max-height:8.5rem; overflow:auto; overflow-wrap:anywhere;
+    color:var(--text-2); font:400 .875rem/1.5 var(--display);
   }
   .log-md h4{margin:0 0 .45rem; font-size:1rem; font-weight:600; letter-spacing:-.02em}
   .log-md h5{margin:.7rem 0 .35rem; font-size:.75rem; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--text-3)}
@@ -2033,10 +2023,10 @@ ut_web_page() {
   }
   .ver .to{color:var(--text-2)}
   .ver .to em{font-style:normal; color:var(--text); font-weight:650}
-  .ver .step{
-    width:.7rem; height:.7rem; flex:none; color:var(--text-3);
+  .ver .move{
+    width:.85rem; height:.85rem; flex:none; color:var(--text-3); display:block;
   }
-  .ver .step svg{width:100%; height:100%; display:block}
+  .ver .move svg{width:100%; height:100%; display:block}
   /* Files: a path is something you copy or open, so give it affordances rather
      than printing it as loose grey text. */
   .files{margin-top:1.75rem; display:flex; flex-direction:column; gap:.5rem}
@@ -2186,7 +2176,7 @@ ut_web_page() {
   @media (prefers-reduced-motion: reduce){
     .step.run .step-state svg{animation:none}
     .wrap,.step,.step.done .step-state svg{animation:none;opacity:1;transform:none}
-    .info-tip,.log-popover,.report-panel{transition:none;animation:none;filter:none;transform:none}
+    .info-tip,.note,.report-panel{transition:none;animation:none;filter:none;transform:none}
   }
   @media (prefers-reduced-transparency: reduce){
     .card,.pill,.step.run{background:var(--bg-tint); backdrop-filter:none; -webkit-backdrop-filter:none}
@@ -2202,7 +2192,6 @@ ut_web_page() {
     .masthead{padding:0 0 1.25rem}
     .step{padding:.72rem .65rem}
     .stats{gap:.85rem}
-    .log-popover{left:.65rem;right:.65rem}
   }
 </style>
 </head>
@@ -2536,7 +2525,7 @@ WEB_HTML_HEAD
       const bit = idx >= i ? `<em>${escapeHtml(part)}</em>` : escapeHtml(part);
       return (idx ? '.' : '') + bit;
     }).join('');
-    return `<span class="ver" aria-label="${escapeHtml(oldS)} to ${escapeHtml(newS)}"><span class="from">${paint(a)}</span><span class="step" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></span><span class="to">${paint(b)}</span></span>`;
+    return `<span class="ver" aria-label="${escapeHtml(oldS)} to ${escapeHtml(newS)}"><span class="from">${paint(a)}</span><span class="move" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></span><span class="to">${paint(b)}</span></span>`;
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
@@ -2571,39 +2560,27 @@ WEB_HTML_HEAD
     return html || '<p class="md-empty">No output yet</p>';
   }
   async function showStepLog(el, label) {
-    if (activeLogEl === el && el.querySelector('.log-popover')) return;
+    if (activeLogEl === el && el.querySelector('.note')) return;
     hideStepLog();
     const token = ++logToken;
     activeLogEl = el;
-    el.classList.add('has-popover');
+    el.classList.add('open');
     await fetchLog();
     if (token !== logToken || activeLogEl !== el || !el.isConnected) return;
-    const panel = document.createElement('aside');
-    panel.className = 'log-popover';
-    panel.setAttribute('role', 'status');
     const isReport = label.startsWith('Report');
     const md = isReport ? reportMarkdown() : logToMarkdown(sliceFor(label));
-    panel.innerHTML = `<div class="log-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 9h8M8 13h5"/><rect x="4" y="3.5" width="16" height="17" rx="3"/></svg><span></span></div><div class="log-md"></div>`;
-    panel.querySelector('.log-head span').textContent = isReport ? 'Report' : label;
-    panel.querySelector('.log-md').innerHTML = renderMiniMarkdown(md);
-    el.appendChild(panel);
-    fitLogPopover(el, panel);
-  }
-  function fitLogPopover(el, panel) {
-    const row = el.getBoundingClientRect();
-    const space = Math.max(88, row.top - 12);
-    panel.style.maxHeight = space + 'px';
-    const body = panel.querySelector('.log-md');
-    const head = panel.querySelector('.log-head');
-    const chrome = (head ? head.offsetHeight : 0) + 28;
-    body.style.maxHeight = Math.max(40, space - chrome) + 'px';
-    body.scrollTop = 0;
+    const note = document.createElement('div');
+    note.className = 'note';
+    note.innerHTML = `<div class="note-in"><div class="log-md"></div></div>`;
+    note.querySelector('.log-md').innerHTML = renderMiniMarkdown(md);
+    el.appendChild(note);
+    requestAnimationFrame(() => note.classList.add('on'));
   }
   function hideStepLog(el = activeLogEl) {
     if (!el) return;
     logToken++;
-    el.querySelector('.log-popover')?.remove();
-    el.classList.remove('has-popover');
+    el.querySelector('.note')?.remove();
+    el.classList.remove('open');
     if (activeLogEl === el) {
       activeLogEl = null;
     }
@@ -2771,13 +2748,6 @@ WEB_HTML_HEAD
   infoBtn.addEventListener('mouseleave', () => tipOn(false));
   infoBtn.addEventListener('focus', () => tipOn(true));
   infoBtn.addEventListener('blur', () => tipOn(false));
-
-  const refitLog = () => {
-    const panel = activeLogEl && activeLogEl.querySelector('.log-popover');
-    if (panel) fitLogPopover(activeLogEl, panel);
-  };
-  window.addEventListener('scroll', refitLog, true);
-  window.addEventListener('resize', refitLog);
 
   $('steps').addEventListener('pointerover', (e) => {
     const el = e.target.closest('.step');
