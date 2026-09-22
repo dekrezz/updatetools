@@ -1913,6 +1913,7 @@ ut_web_page() {
     margin:.35rem 0 .15rem; padding:0 0 .05rem .75rem;
     border-left:2px solid color-mix(in oklab, var(--text-3) 40%, transparent);
     max-height:8.5rem; overflow:auto; overflow-wrap:anywhere;
+    overscroll-behavior:contain;
     color:var(--text-2); font:400 .875rem/1.5 var(--display);
   }
   .log-md h4{margin:0 0 .45rem; font-size:1rem; font-weight:600; letter-spacing:-.02em}
@@ -2759,6 +2760,13 @@ WEB_HTML_HEAD
     if (!hoverLogs || !el || el.contains(e.relatedTarget)) return;
     hideStepLog(el);
   });
+  $('steps').addEventListener('wheel', (e) => {
+    const box = e.target.closest('.log-md');
+    if (!box) return;
+    e.preventDefault();
+    const max = box.scrollHeight - box.clientHeight;
+    box.scrollTop = Math.min(max, Math.max(0, box.scrollTop + e.deltaY));
+  }, { passive: false });
   $('steps').addEventListener('focusin', (e) => {
     const el = e.target.closest('.step');
     if (el) showStepLog(el, el.dataset.label);
