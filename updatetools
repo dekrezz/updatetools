@@ -1870,28 +1870,28 @@ try {
   }
   .seg{
     flex:1 1 0; min-width:.9rem; border-radius:7px;
-    display:flex; align-items:center; overflow:hidden; padding:0 .7rem;
-    background:var(--plate); color:var(--text-3);
-    transition:flex-grow .6s cubic-bezier(.2,.8,.2,1), background-color .3s ease, color .3s ease;
+    background:var(--plate);
+    transition:flex-grow .6s cubic-bezier(.2,.8,.2,1), background-color .3s ease;
   }
-  .seg-n{
-    font:600 .75rem/1 var(--display); letter-spacing:.01em;
-    white-space:nowrap; overflow:hidden; text-overflow:clip;
-  }
-  .seg.done{background:var(--seg); color:var(--seg-ink)}
+  .seg.done{background:var(--seg)}
   .seg.skip{background:repeating-linear-gradient(135deg,var(--plate-2) 0 5px,var(--plate) 5px 10px)}
-  .seg.fail{background:var(--bad); color:#fff}
+  .seg.fail{background:var(--bad)}
   .seg.run{
-    color:var(--seg-ink);
     background:linear-gradient(90deg,var(--seg) 0 38%,color-mix(in oklab,var(--seg) 55%,#fff) 50%,var(--seg) 62% 100%);
     background-size:250% 100%; animation:seg-run 1.6s linear infinite;
   }
   @keyframes seg-run{from{background-position:100% 0}to{background-position:-150% 0}}
-  .tally{
-    margin:.7rem 0 0; color:var(--text-3); font-size:.8125rem; letter-spacing:.01em;
-    font-variant-numeric:tabular-nums;
+  .legend{
+    display:flex; flex-wrap:wrap; gap:.45rem 1.35rem; margin:.85rem 0 0; padding:0; list-style:none;
+    color:var(--text-2); font-size:.8125rem; font-variant-numeric:tabular-nums;
   }
-  .tally b{color:var(--text); font-weight:600}
+  .legend li{display:inline-flex; align-items:center; gap:.45rem; white-space:nowrap}
+  .legend i{width:.6rem; height:.6rem; border-radius:3px; background:var(--seg); flex:none}
+  .legend li.pending{color:var(--text-3)}
+  .legend li.pending i{background:var(--plate-2)}
+  .legend li.skip i{background:repeating-linear-gradient(135deg,var(--text-3) 0 2px,transparent 2px 4px)}
+  .legend li.fail i{background:var(--bad)}
+  .legend span{color:var(--text-3)}
 
   /* ── steps: app list, deliberately not a terminal timeline ─────────────── */
   .steps{
@@ -2294,7 +2294,6 @@ try {
     .wrap{padding:4.25rem 1rem 4rem}
     .masthead{padding:0 0 1.25rem}
     .step{padding:.72rem .65rem}
-    .seg{padding:0 .45rem}
     .theme-switch{top:.6rem; right:.6rem}
   }
 </style>
@@ -2319,7 +2318,7 @@ try {
       </div>
       <div class="clock" id="clock" aria-live="off">00:00</div>
       <div class="ribbon" id="ribbon" aria-hidden="true"></div>
-      <p class="tally" id="tally"></p>
+      <ul class="legend" id="legend"></ul>
     </header>
 
     <section class="steps" id="steps"></section>
@@ -2471,14 +2470,9 @@ WEB_HTML_HEAD
     const hex = path && path.getAttribute('fill');
     return hex && /^#[0-9a-f]{6}$/i.test(hex) ? hex : '#6b7280';
   }
-  function inkOn(hex) {
-    const n = parseInt(hex.slice(1), 16);
-    const l = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
-    return l > 0.62 ? '#12151c' : '#ffffff';
-  }
   function paintRibbon(st) {
     const rib = $('ribbon');
-    const steps = st.steps || [];
+    const steps = (st.steps || []).filter((s) => s.slug !== 'report');
     const spent = (s) => s.s === 'run'
       ? Math.max(1, st.elapsed - (s.b ?? st.elapsed))
       : (s.t ?? 0);
@@ -2490,10 +2484,7 @@ WEB_HTML_HEAD
         const fresh = document.createElement('span');
         fresh.dataset.slug = s.slug || '';
         fresh.title = s.n;
-        const c = segColor(s.slug);
-        fresh.style.setProperty('--seg', c);
-        fresh.style.setProperty('--seg-ink', inkOn(c));
-        fresh.innerHTML = `<span class="seg-n">${escapeHtml(s.n)}</span>`;
+        fresh.style.setProperty('--seg', segColor(s.slug));
         if (seg) seg.replaceWith(fresh); else rib.appendChild(fresh);
         seg = fresh;
       }
@@ -2501,21 +2492,17 @@ WEB_HTML_HEAD
       seg.style.flexGrow = String(Math.max(1, s.s === 'pending' ? typical : spent(s)));
     });
     while (rib.children.length > steps.length) rib.lastElementChild.remove();
-    requestAnimationFrame(fitSegLabels);
-    setTimeout(fitSegLabels, 700);
+
+    const legend = steps.map((s) => {
+      const t = s.s === 'pending' ? '' : s.s === 'skip' ? 'skipped' : fmtShort(spent(s));
+      return `<li class="${s.s}" style="--seg:${segColor(s.slug)}"><i></i>${escapeHtml(s.n)}${t ? ` <span>${t}</span>` : ''}</li>`;
+    }).join('');
+    if ($('legend').innerHTML !== legend) $('legend').innerHTML = legend;
   }
-  function fitSegLabels() {
-    for (const seg of $('ribbon').children) {
-      const n = seg.firstElementChild;
-      if (!n) continue;
-      n.style.visibility = 'hidden';
-      n.style.visibility = n.scrollWidth <= seg.clientWidth - 24 ? '' : 'hidden';
-    }
+  function fmtShort(sec) {
+    sec = Math.round(sec || 0);
+    return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s`;
   }
-  $('ribbon').addEventListener('transitionend', (e) => {
-    if (e.propertyName === 'flex-grow') fitSegLabels();
-  });
-  addEventListener('resize', fitSegLabels);
 
   let lastSig = '', stepsReadyTimer = 0;
   let latestUpdates = [], latestPhase = 'run';
@@ -2524,14 +2511,10 @@ WEB_HTML_HEAD
     latestPhase = st.phase;
     // header
     $('phase').textContent =
-      st.phase === 'done' ? (st.fail ? `${st.done} updated, ${st.fail} failed` : `${st.done} steps completed`)
+      st.phase === 'done'
+        ? [`${st.done} steps completed`, st.skip ? `${st.skip} skipped` : '', st.fail ? `${st.fail} failed` : ''].filter(Boolean).join(' · ')
                           : `${st.done + st.skip + st.fail} of ${st.total} steps`;
     $('clock').textContent = fmt(st.elapsed || 0);
-    $('tally').innerHTML = [
-      `<b>${st.done}</b> done`,
-      `<b>${st.skip}</b> skipped`,
-      ...(st.fail ? [`<b>${st.fail}</b> failed`] : []),
-    ].join(' &nbsp;·&nbsp; ');
     paintRibbon(st);
 
     // Patch only rows that changed. Rebuilding the whole list made every status
