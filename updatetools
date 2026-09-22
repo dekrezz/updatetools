@@ -1985,6 +1985,56 @@ ut_web_page() {
   .verdict .mark svg{width:1.5rem; height:1.5rem}
   .headline{font-size:1.625rem; font-weight:700; letter-spacing:-.025em; margin:0; line-height:1.1}
   .sub{margin:.25rem 0 0; color:var(--text-2); font-size:.9375rem}
+  .record{
+    margin-top:1.75rem; border:1px solid var(--hairline-strong); background:transparent;
+    color:var(--text); font:inherit; font-size:.9375rem; padding:.7rem 1.1rem;
+    border-radius:999px; cursor:pointer;
+  }
+  .record:hover{border-color:var(--text-2)}
+  .ledger{
+    --ink:#221e19; --paper:#f3eee4; --rule:rgba(34,30,25,.16); --rust:#9a3412; --dust:#8a8175;
+    position:fixed; inset:0; z-index:40; overflow:auto;
+    background:var(--paper); color:var(--ink);
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    padding:3.2rem clamp(1.25rem,6vw,4.5rem) 4.5rem;
+    clip-path:inset(0 0 0 100%);
+  }
+  .ledger.show{animation:buff .48s cubic-bezier(.65,0,.2,1) forwards}
+  @keyframes buff{to{clip-path:inset(0)}}
+  .ledger-back{
+    appearance:none; border:0; background:none; padding:0; cursor:pointer;
+    color:var(--dust); font:500 .8125rem/1 var(--sans); letter-spacing:.04em;
+  }
+  .ledger-back:hover{color:var(--ink)}
+  .ledger-kicker{
+    margin:2.2rem 0 0; color:var(--dust);
+    font:500 .75rem/1 var(--sans); letter-spacing:.14em; text-transform:uppercase;
+  }
+  .ledger-title{
+    margin:.4rem 0 0; font-size:clamp(2.4rem,6vw,4.4rem); font-weight:500;
+    letter-spacing:-.035em; line-height:.95;
+  }
+  .ledger-list{list-style:none; margin:2.4rem 0 0; padding:0}
+  .ledger-list li{
+    display:grid; grid-template-columns:1.75rem minmax(8rem,1fr) auto;
+    gap:1rem; align-items:baseline; padding:1.05rem 0;
+    border-top:1px solid var(--rule);
+  }
+  .ledger-list li:last-child{border-bottom:1px solid var(--rule)}
+  .ledger .logo{background:transparent; width:1.75rem; height:1.75rem; border-radius:0}
+  .ledger .logo svg,.ledger .logo img{width:1.15rem; height:1.15rem}
+  .ledger .name{font-size:1.45rem; font-weight:500; letter-spacing:-.02em}
+  .ledger .ver{font-family:var(--mono); font-size:.95rem}
+  .ledger .ver .from,.ledger .ver .move{color:var(--dust)}
+  .ledger .ver .from em{color:var(--dust); font-weight:450}
+  .ledger .ver .to{color:var(--ink)}
+  .ledger .ver .to em{color:var(--rust); font-weight:650}
+  .ledger-empty{margin:2rem 0 0; color:var(--dust); font-size:1.25rem}
+  @media (max-width:40rem){
+    .ledger{padding:2.2rem 1.15rem 3rem}
+    .ledger-list li{grid-template-columns:1.5rem minmax(0,1fr); row-gap:.35rem}
+    .ledger .ver{grid-column:2}
+  }
   .report-panel{
     margin:2rem 0 0; padding:1rem; border:1px solid var(--hairline);
     border-radius:18px; background:var(--bg-tint);
@@ -2177,7 +2227,8 @@ ut_web_page() {
   @media (prefers-reduced-motion: reduce){
     .step.run .step-state svg{animation:none}
     .wrap,.step,.step.done .step-state svg{animation:none;opacity:1;transform:none}
-    .info-tip,.note,.report-panel{transition:none;animation:none;filter:none;transform:none}
+    .info-tip,.note,.report-panel,.ledger.show{transition:none;animation:none;filter:none;transform:none}
+    .ledger.show{clip-path:none}
   }
   @media (prefers-reduced-transparency: reduce){
     .card,.pill,.step.run{background:var(--bg-tint); backdrop-filter:none; -webkit-backdrop-filter:none}
@@ -2235,21 +2286,19 @@ ut_web_page() {
           <p class="sub" id="r-sub"></p>
         </span>
       </div>
-      <section class="report-panel" id="r-report" hidden>
-        <div class="report-head">
-          <span class="report-mark">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4M9 12h6M9 15.5h4"/></svg>
-          </span>
-          <span><h3>Report</h3><p class="report-summary" id="r-title"></p></span>
-        </div>
-        <div class="cards" id="r-cards"></div>
-        <p class="report-empty" id="r-empty" hidden>No version changes detected in this run.</p>
-      </section>
+      <button type="button" class="record" id="open-ledger">Open the record</button>
     </section>
 
     <section class="files" id="files"></section>
     <div class="logbox" id="logbox" hidden><pre id="logtext"></pre></div>
   </div>
+  <section class="ledger" id="ledger" hidden>
+    <button type="button" class="ledger-back" id="ledger-back">Back to the run</button>
+    <p class="ledger-kicker" id="ledger-kicker"></p>
+    <h2 class="ledger-title" id="ledger-title">The record</h2>
+    <ol class="ledger-list" id="ledger-list"></ol>
+    <p class="ledger-empty" id="ledger-empty" hidden>Nothing moved in this run.</p>
+  </section>
   <div class="scrim" id="scrim">
     <div class="sheet" id="pwform" role="dialog" aria-modal="true" aria-labelledby="pw-title">
       <div class="sheet-head">
@@ -2444,17 +2493,20 @@ WEB_HTML_HEAD
         `${st.done} steps completed · ${st.skip} skipped${failed ? ` · ${st.fail} failed` : ''} · took ${fmt(st.elapsed)}`;
 
       const ups = st.updates || [];
-      $('r-report').hidden = false;
-      $('r-title').textContent = ups.length
-        ? `${ups.length} ${ups.length === 1 ? 'tool moved' : 'tools moved'} to a new version`
-        : 'No changes';
-      $('r-empty').hidden = ups.length > 0;
-      $('r-cards').innerHTML = ups.map((u) => `
-        <div class="card">
+      const moved = ups.length
+        ? `${ups.length} ${ups.length === 1 ? 'tool moved' : 'tools moved'}`
+        : 'Nothing moved';
+      $('open-ledger').textContent = moved;
+      $('ledger-kicker').textContent = $('r-sub').textContent;
+      $('ledger-title').textContent = $('r-head').textContent;
+      $('ledger-empty').hidden = ups.length > 0;
+      $('ledger-list').innerHTML = ups.map((u) => `
+        <li>
           ${logo(u.slug, u.img, u.n)}
           <span class="name">${escapeHtml(u.n)}</span>
           ${versionMarkup(u.o, u.w)}
-        </div>`).join('');
+        </li>`).join('');
+      if (!ledgerShown) { ledgerShown = true; openLedger(); }
       document.title = st.fail ? `updatetools — ${st.fail} failed` : 'updatetools — done';
     } else {
       document.title = `updatetools — ${Math.round(pct)}%`;
@@ -2465,6 +2517,19 @@ WEB_HTML_HEAD
   const hoverLogs = matchMedia('(hover: hover) and (pointer: fine)').matches;
   let activeLogEl = null, logToken = 0, openedAt = 0;
   let hoverEl = null, hoverOpenTimer = 0;
+  let ledgerShown = false;
+  function openLedger() {
+    const el = $('ledger');
+    el.hidden = false;
+    el.classList.remove('show');
+    void el.offsetWidth;
+    el.classList.add('show');
+  }
+  function closeLedger() {
+    const el = $('ledger');
+    el.hidden = true;
+    el.classList.remove('show');
+  }
   let logText = '', logAt = 0;
   async function fetchLog() {
     if (Date.now() - logAt < 800) return logText;
@@ -2806,6 +2871,11 @@ WEB_HTML_HEAD
   });
 
   let misses = 0;
+  $('open-ledger').addEventListener('click', openLedger);
+  $('ledger-back').addEventListener('click', closeLedger);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('ledger').hidden) closeLedger();
+  });
   async function poll() {
     try {
       const r = await fetch('state.json?t=' + Date.now(), { cache: 'no-store' });
