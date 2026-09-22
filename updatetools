@@ -2020,8 +2020,20 @@ ut_web_page() {
     gap:1rem; padding:1rem 1.125rem;
   }
   .card .name{font-weight:600}
-  .ver{font-family:var(--mono); font-size:.8125rem; display:flex; align-items:center; gap:.5rem; white-space:nowrap}
-  .ver .old{color:var(--text-3)} .ver .arrow{color:var(--text-3)} .ver .new{color:var(--text); font-weight:600}
+  .ver{
+    display:inline-grid; grid-template-columns:auto auto; column-gap:.02em;
+    align-items:end; justify-items:start;
+    font-family:var(--mono); font-size:.8125rem; font-variant-numeric:tabular-nums;
+    line-height:1.05; white-space:nowrap;
+  }
+  .ver .stem{grid-column:1; grid-row:2; color:var(--text-2)}
+  .ver .swap{grid-column:2; grid-row:1 / span 2; display:flex; flex-direction:column; align-items:flex-start; gap:.12rem}
+  .ver .old{
+    color:var(--text-3); font-size:.68rem; line-height:1;
+    text-decoration:line-through;
+    text-decoration-color:color-mix(in oklab, var(--text-3) 50%, transparent);
+  }
+  .ver .new{color:var(--text); font-weight:600}
   /* Files: a path is something you copy or open, so give it affordances rather
      than printing it as loose grey text. */
   .files{margin-top:1.75rem; display:flex; flex-direction:column; gap:.5rem}
@@ -2447,8 +2459,8 @@ WEB_HTML_HEAD
       $('r-cards').innerHTML = ups.map((u) => `
         <div class="card">
           ${logo(u.slug, u.img, u.n)}
-          <span class="name">${u.n}</span>
-          <span class="ver"><span class="old">${u.o}</span><span class="arrow">→</span><span class="new">${u.w}</span></span>
+          <span class="name">${escapeHtml(u.n)}</span>
+          ${versionMarkup(u.o, u.w)}
         </div>`).join('');
       document.title = st.fail ? `updatetools — ${st.fail} failed` : 'updatetools — done';
     } else {
@@ -2509,6 +2521,23 @@ WEB_HTML_HEAD
       out.push(t);
     }
     return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  function versionMove(oldV, newV) {
+    const oldS = String(oldV ?? '');
+    const newS = String(newV ?? '');
+    const a = oldS.split('.');
+    const b = newS.split('.');
+    let i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    if (!i) return { stem: '', oldTail: oldS, newTail: newS };
+    const oldTail = a.slice(i).join('.');
+    const newTail = b.slice(i).join('.');
+    return { stem: a.slice(0, i).join('.') + '.', oldTail, newTail };
+  }
+  function versionMarkup(oldV, newV) {
+    const { stem, oldTail, newTail } = versionMove(oldV, newV);
+    const oldHtml = oldTail ? `<span class="old">${escapeHtml(oldTail)}</span>` : '';
+    return `<span class="ver" aria-label="${escapeHtml(String(oldV))} to ${escapeHtml(String(newV))}">${stem ? `<span class="stem">${escapeHtml(stem)}</span>` : ''}<span class="swap">${oldHtml}<span class="new">${escapeHtml(newTail)}</span></span></span>`;
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
