@@ -2034,10 +2034,9 @@ ut_web_page() {
   .ver .to{color:var(--text-2)}
   .ver .to em{font-style:normal; color:var(--text); font-weight:650}
   .ver .step{
-    width:.55rem; height:.55rem; flex:none; color:var(--text-3);
-    border-right:1.5px solid currentColor; border-top:1.5px solid currentColor;
-    transform:rotate(45deg); margin-right:.15rem;
+    width:.7rem; height:.7rem; flex:none; color:var(--text-3);
   }
+  .ver .step svg{width:100%; height:100%; display:block}
   /* Files: a path is something you copy or open, so give it affordances rather
      than printing it as loose grey text. */
   .files{margin-top:1.75rem; display:flex; flex-direction:column; gap:.5rem}
@@ -2537,7 +2536,7 @@ WEB_HTML_HEAD
       const bit = idx >= i ? `<em>${escapeHtml(part)}</em>` : escapeHtml(part);
       return (idx ? '.' : '') + bit;
     }).join('');
-    return `<span class="ver" aria-label="${escapeHtml(oldS)} to ${escapeHtml(newS)}"><span class="from">${paint(a)}</span><span class="step" aria-hidden="true"></span><span class="to">${paint(b)}</span></span>`;
+    return `<span class="ver" aria-label="${escapeHtml(oldS)} to ${escapeHtml(newS)}"><span class="from">${paint(a)}</span><span class="step" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></span><span class="to">${paint(b)}</span></span>`;
   }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
