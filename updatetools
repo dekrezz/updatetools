@@ -2001,17 +2001,26 @@ ut_web_page() {
   }
   .ledger.show{animation:buff .48s cubic-bezier(.65,0,.2,1) forwards}
   @keyframes buff{to{clip-path:inset(0)}}
+  .ledger-top{display:flex; align-items:flex-end; justify-content:space-between; gap:1.5rem 2rem; flex-wrap:wrap}
   .ledger-back{
     appearance:none; border:0; background:none; padding:0; cursor:pointer;
+    display:inline-flex; align-items:center; gap:.45rem;
     color:var(--dust); font:500 .8125rem/1 var(--sans); letter-spacing:.04em;
   }
+  .ledger-back svg{width:.95rem; height:.95rem; display:block; transition:transform .18s ease}
   .ledger-back:hover{color:var(--ink)}
-  .ledger-kicker{
-    margin:2.2rem 0 0; color:var(--dust);
-    font:500 .75rem/1 var(--sans); letter-spacing:.14em; text-transform:uppercase;
+  .ledger-back:hover svg{transform:translateX(-3px)}
+  .ledger-facts{display:flex; gap:1.35rem; margin:0}
+  .ledger-facts span{
+    color:var(--dust); font:500 .68rem/1 var(--sans); letter-spacing:.12em; text-transform:uppercase;
+  }
+  .ledger-facts b{
+    display:block; margin-bottom:.28rem;
+    color:var(--ink); font:500 1.35rem/1 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    letter-spacing:-.03em; font-variant-numeric:tabular-nums; text-transform:none;
   }
   .ledger-title{
-    margin:.4rem 0 0; font-size:clamp(2.4rem,6vw,4.4rem); font-weight:500;
+    margin:1.6rem 0 0; font-size:clamp(2.4rem,6vw,4.4rem); font-weight:500;
     letter-spacing:-.035em; line-height:.95;
   }
   .ledger-list{list-style:none; margin:2.4rem 0 0; padding:0}
@@ -2293,8 +2302,13 @@ ut_web_page() {
     <div class="logbox" id="logbox" hidden><pre id="logtext"></pre></div>
   </div>
   <section class="ledger" id="ledger" hidden>
-    <button type="button" class="ledger-back" id="ledger-back">Back to the run</button>
-    <p class="ledger-kicker" id="ledger-kicker"></p>
+    <div class="ledger-top">
+      <button type="button" class="ledger-back" id="ledger-back">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m11 18-6-6 6-6"/></svg>
+        Back to the run
+      </button>
+      <div class="ledger-facts" id="ledger-facts"></div>
+    </div>
     <h2 class="ledger-title" id="ledger-title">The record</h2>
     <ol class="ledger-list" id="ledger-list"></ol>
     <p class="ledger-empty" id="ledger-empty" hidden>Nothing moved in this run.</p>
@@ -2497,7 +2511,12 @@ WEB_HTML_HEAD
         ? `${ups.length} ${ups.length === 1 ? 'tool moved' : 'tools moved'}`
         : 'Nothing moved';
       $('open-ledger').textContent = moved;
-      $('ledger-kicker').textContent = $('r-sub').textContent;
+      $('ledger-facts').innerHTML = [
+        [st.done, 'completed'],
+        [st.skip, 'skipped'],
+        ...(st.fail ? [[st.fail, 'failed']] : []),
+        [fmt(st.elapsed), 'elapsed'],
+      ].map(([n, k]) => `<span><b>${n}</b>${k}</span>`).join('');
       $('ledger-title').textContent = $('r-head').textContent;
       $('ledger-empty').hidden = ups.length > 0;
       $('ledger-list').innerHTML = ups.map((u) => `
