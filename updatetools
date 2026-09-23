@@ -13,6 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+# UPDATETOOLS_REV=a281b33
+# Short git revision stamped into installed copies by --self-update and the
+# Homebrew formula. --version prefers `git describe` when this file is run from
+# a checkout of the updatetools repo; otherwise it prints this stamp.
+#
 # updatetools — update everything updatable on this Mac.
 #
 # The run has no terminal UI: it serves a live dashboard on 127.0.0.1 and opens
@@ -27,6 +32,8 @@
 #   updatetools --no-manual-apps # skip safe updates for apps installed from DMGs
 #   updatetools --debug         # keep the run's log and write the HTML report to
 #                               # the Desktop (both are temporary otherwise)
+#   updatetools --version       # print the short revision of this copy
+#   updatetools --self-update   # replace this script with main from GitHub
 #
 # Env toggles:
 #   GREEDY=0 PLAIN=1 CLOSE_APPS=0 QUIET_APPS=0 DEBUG=1
@@ -46,6 +53,164 @@ DEBUG="${DEBUG:-0}"
 STALL_TIMEOUT="${STALL_TIMEOUT:-300}"
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-300}"
 
+UPDATETOOLS_RAW_URL="https://raw.githubusercontent.com/dekrezz/updatetools/main/updatetools"
+UPDATETOOLS_GIT_URL="https://github.com/dekrezz/updatetools.git"
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Absolute path of the running script ($0), following one symlink level.
+updatetools_resolve_self() {
+  local src link dir
+  src=$0
+  case "$src" in
+    /*) ;;
+    *) src=$PWD/$src ;;
+  esac
+  if [ -L "$src" ]; then
+    link=$(readlink "$src") || {
+      echo "error: cannot resolve symlink: $src" >&2
+      return 1
+    }
+    case "$link" in
+      /*) src=$link ;;
+      *)
+        dir=$(dirname "$src")
+        src=$dir/$link
+        ;;
+    esac
+  fi
+  if [ ! -f "$src" ]; then
+    echo "error: running script path is not a file: $src" >&2
+    return 1
+  fi
+  printf '%s\n' "$src"
+}
+
+# Print usage comment block (not the Apache license boilerplate).
+updatetools_print_help() {
+  awk '
+    /^# updatetools / { show = 1 }
+    show {
+      if ($0 ~ /^set -u/) exit
+      sub(/^# ?/, "")
+      print
+    }
+  ' "$1"
+}
+
+# Revision string: git describe in a repo checkout, else UPDATETOOLS_REV stamp.
+updatetools_print_version() {
+  local self dir root rev stamp
+  self=$(updatetools_resolve_self) || return 1
+  dir=$(dirname "$self")
+  if have git; then
+    root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)
+    if [ -n "${root:-}" ] && [ -f "$root/updatetools" ]; then
+      # Prefer describe when the running file is this repo's script (or a
+      # same-inode copy). Avoid treating an unrelated git repo that happens
+      # to contain an updatetools path as authoritative.
+      if [ "$self" -ef "$root/updatetools" ] || [ "$dir" = "$root" ]; then
+        rev=$(git -C "$root" describe --always --dirty 2>/dev/null) || {
+          echo "error: git describe failed in $root" >&2
+          return 1
+        }
+        printf 'updatetools %s\n' "$rev"
+        return 0
+      fi
+    fi
+  fi
+  stamp=$(sed -n 's/^# UPDATETOOLS_REV=//p' "$self" | sed -n '1p')
+  if [ -z "$stamp" ]; then
+    echo "error: no UPDATETOOLS_REV stamp in $self (and not a repo checkout)" >&2
+    return 1
+  fi
+  printf 'updatetools %s\n' "$stamp"
+}
+
+# Replace the executing file with main from GitHub (atomic, no sudo).
+updatetools_self_update() {
+  local self dir tmp stamped rev first
+  self=$(updatetools_resolve_self) || return 1
+  dir=$(dirname "$self")
+
+  if ! have curl; then
+    echo "error: curl is required for --self-update" >&2
+    return 1
+  fi
+  if ! have git; then
+    echo "error: git is required for --self-update (to resolve main revision)" >&2
+    return 1
+  fi
+
+  rev=$(git ls-remote "$UPDATETOOLS_GIT_URL" refs/heads/main 2>/dev/null | awk '{print $1}')
+  if [ -z "$rev" ] || [ "${#rev}" -lt 7 ]; then
+    echo "error: could not resolve main revision from $UPDATETOOLS_GIT_URL" >&2
+    return 1
+  fi
+  rev=$(printf '%s' "$rev" | cut -c1-7)
+
+  tmp=$(mktemp "$dir/updatetools.XXXXXX") || {
+    echo "error: cannot create temp file in $dir" >&2
+    return 1
+  }
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp'" EXIT
+
+  if ! curl -fsSL "$UPDATETOOLS_RAW_URL" -o "$tmp"; then
+    echo "error: failed to download $UPDATETOOLS_RAW_URL" >&2
+    return 1
+  fi
+  if [ ! -s "$tmp" ]; then
+    echo "error: download is empty; leaving $self unchanged" >&2
+    return 1
+  fi
+  first=$(sed -n '1p' "$tmp")
+  if [ "$first" != '#!/usr/bin/env bash' ]; then
+    echo "error: download does not start with #!/usr/bin/env bash; leaving $self unchanged" >&2
+    return 1
+  fi
+  if ! grep -q 'Licensed under the Apache License, Version 2.0' "$tmp"; then
+    echo "error: download missing Apache license marker; leaving $self unchanged" >&2
+    return 1
+  fi
+
+  stamped=$(mktemp "$dir/updatetools.XXXXXX") || {
+    echo "error: cannot create stamp temp file in $dir" >&2
+    return 1
+  }
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp' '$stamped'" EXIT
+
+  if grep -q '^# UPDATETOOLS_REV=' "$tmp"; then
+    sed "s/^# UPDATETOOLS_REV=.*/# UPDATETOOLS_REV=$rev/" "$tmp" >"$stamped" || {
+      echo "error: failed to stamp revision $rev; leaving $self unchanged" >&2
+      return 1
+    }
+  else
+    # Insert stamp after the shebang if upstream lacks the line.
+    {
+      sed -n '1p' "$tmp"
+      echo "# UPDATETOOLS_REV=$rev"
+      sed -n '2,$p' "$tmp"
+    } >"$stamped" || {
+      echo "error: failed to insert revision stamp; leaving $self unchanged" >&2
+      return 1
+    }
+  fi
+
+  chmod 755 "$stamped" || {
+    echo "error: chmod 755 failed on temp file; leaving $self unchanged" >&2
+    return 1
+  }
+  mv "$stamped" "$self" || {
+    echo "error: atomic replace of $self failed" >&2
+    return 1
+  }
+  rm -f "$tmp"
+  trap - EXIT
+  printf 'Updated %s to %s\n' "$self" "$rev"
+}
+
 for arg in "$@"; do
   case "$arg" in
     --plain)         PLAIN=1 ;;
@@ -54,7 +219,18 @@ for arg in "$@"; do
     --no-greedy)     GREEDY=0 ;;
     --no-close)      CLOSE_APPS=0 ;;
     --no-manual-apps) QUIET_APPS=0 ;;
-    -h|--help)  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)
+      updatetools_print_help "$(updatetools_resolve_self)" || exit 1
+      exit 0
+      ;;
+    --version)
+      updatetools_print_version || exit 1
+      exit 0
+      ;;
+    --self-update)
+      updatetools_self_update || exit 1
+      exit 0
+      ;;
     *) echo "Unknown option: $arg"; exit 2 ;;
   esac
 done
@@ -64,8 +240,6 @@ export CLOSE_APPS QUIET_APPS MAKE_REPORT OPEN_REPORT DEBUG
 # Homebrew env
 if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)"
 elif [ -x /usr/local/bin/brew ]; then eval "$(/usr/local/bin/brew shellenv)"; fi
-
-have() { command -v "$1" >/dev/null 2>&1; }
 
 # Recursively terminate a process and all of its descendants.
 kill_tree() {
