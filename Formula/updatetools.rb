@@ -2,6 +2,7 @@
 
 # Homebrew formula for updatetools. This repository is also the tap:
 #   brew tap dekrezz/updatetools https://github.com/dekrezz/updatetools
+#   brew trust --formula dekrezz/updatetools/updatetools
 #   brew install updatetools
 #   brew install --HEAD updatetools
 #

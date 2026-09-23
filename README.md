@@ -64,9 +64,14 @@ release [`2026.09.23`](https://github.com/dekrezz/updatetools/releases/tag/2026.
 
 ```bash
 brew tap dekrezz/updatetools https://github.com/dekrezz/updatetools
+brew trust --formula dekrezz/updatetools/updatetools
 brew install updatetools
 brew install --HEAD updatetools   # track main
 ```
+
+Homebrew 7 will not load a third-party formula until that tap is trusted.
+`brew trust` is local and has to be run once per machine; the formula cannot
+skip it.
 
 (`brew tap user/repo` without a URL expects a `homebrew-updatetools` repo; the
 explicit URL is required for this project name.)
