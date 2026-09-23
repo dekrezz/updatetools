@@ -36,9 +36,19 @@
 #                               # the Desktop (both are temporary otherwise)
 #   updatetools --version       # print the short revision of this copy
 #   updatetools --self-update   # replace this script with main from GitHub
+#   updatetools --schedule [interval]  # install a LaunchAgent (default every 24h)
+#   updatetools --unschedule    # remove the LaunchAgent
+#   updatetools --no-notify     # never show a desktop notification at end of run
+#   updatetools --notify-on-error  # notify only when a step failed
+#
+# Schedule interval grammar (same short forms as brew autoupdate):
+#   (omitted)     every 86400 seconds (24h)
+#   3600 / 30m / 12h / 1d / 1w   relative StartInterval (s/m/h/d/w; bare digits = seconds)
+#   09:30 / 00:00                daily StartCalendarInterval at that local wall-clock time
 #
 # Env toggles:
 #   GREEDY=0 PLAIN=1 CLOSE_APPS=0 QUIET_APPS=0 DEBUG=1
+#   NOTIFY_MODE=always|never|on_error
 #   UPDATETOOLS_CLOSE="a b"      # force-close these cask apps to upgrade them now
 #   UPDATETOOLS_PROTECT="a b"    # never close these cask apps
 #   UPDATETOOLS_ENABLED_FILE     # override ~/.config/updatetools/enabled
@@ -59,6 +69,16 @@ PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-300}"
 # unless the dashboard Start control confirms a selection).
 ONLY_STEPS=""
 SKIP_STEPS=""
+# Desktop notification at end of run: always | never | on_error
+NOTIFY_MODE="${NOTIFY_MODE:-always}"
+FLAG_NO_NOTIFY=0
+FLAG_NOTIFY_ON_ERROR=0
+DO_SCHEDULE=0
+DO_UNSCHEDULE=0
+SCHEDULE_INTERVAL=""
+UT_RUN_FAILS=0
+
+UT_LAUNCH_LABEL="com.dekrezz.updatetools"
 
 UPDATETOOLS_RAW_URL="https://raw.githubusercontent.com/dekrezz/updatetools/main/updatetools"
 UPDATETOOLS_GIT_URL="https://github.com/dekrezz/updatetools.git"
@@ -218,44 +238,72 @@ updatetools_self_update() {
   printf 'Updated %s to %s\n' "$self" "$rev"
 }
 
-while [ $# -gt 0 ]; do
-  case "$1" in
+# Index-based parser so valued options (--only/--skip/schedule interval) never
+# swallow the next --flag.
+_ut_i=1
+while [ "$_ut_i" -le $# ]; do
+  eval "_ut_arg=\${$_ut_i}"
+  case "$_ut_arg" in
     --plain)         PLAIN=1 ;;
     --web)           PLAIN=0 ;;
     --debug|--keep)  DEBUG=1 ;;
     --no-greedy)     GREEDY=0 ;;
     --no-close)      CLOSE_APPS=0 ;;
     --no-manual-apps) QUIET_APPS=0 ;;
-    --only)
-      if [ $# -lt 2 ]; then
-        echo "updatetools: --only needs a comma-separated key list" >&2
-        exit 2
-      fi
-      case "$2" in
-        --*)
+    --only|--only=*)
+      if [ "$_ut_arg" = "--only" ]; then
+        _ut_next=$((_ut_i + 1))
+        if [ "$_ut_next" -gt $# ]; then
           echo "updatetools: --only needs a comma-separated key list" >&2
           exit 2
-          ;;
-      esac
-      ONLY_STEPS="$2"
-      shift
-      ;;
-    --only=*)        ONLY_STEPS="${1#--only=}" ;;
-    --skip)
-      if [ $# -lt 2 ]; then
-        echo "updatetools: --skip needs a comma-separated key list" >&2
-        exit 2
+        fi
+        eval "_ut_narg=\${$_ut_next}"
+        case "$_ut_narg" in
+          --*)
+            echo "updatetools: --only needs a comma-separated key list" >&2
+            exit 2
+            ;;
+        esac
+        ONLY_STEPS="$_ut_narg"
+        _ut_i=$_ut_next
+      else
+        ONLY_STEPS="${_ut_arg#--only=}"
       fi
-      case "$2" in
-        --*)
+      ;;
+    --skip|--skip=*)
+      if [ "$_ut_arg" = "--skip" ]; then
+        _ut_next=$((_ut_i + 1))
+        if [ "$_ut_next" -gt $# ]; then
           echo "updatetools: --skip needs a comma-separated key list" >&2
           exit 2
-          ;;
-      esac
-      SKIP_STEPS="$2"
-      shift
+        fi
+        eval "_ut_narg=\${$_ut_next}"
+        case "$_ut_narg" in
+          --*)
+            echo "updatetools: --skip needs a comma-separated key list" >&2
+            exit 2
+            ;;
+        esac
+        SKIP_STEPS="$_ut_narg"
+        _ut_i=$_ut_next
+      else
+        SKIP_STEPS="${_ut_arg#--skip=}"
+      fi
       ;;
-    --skip=*)        SKIP_STEPS="${1#--skip=}" ;;
+    --no-notify)     FLAG_NO_NOTIFY=1; NOTIFY_MODE=never ;;
+    --notify-on-error) FLAG_NOTIFY_ON_ERROR=1; NOTIFY_MODE=on_error ;;
+    --schedule)
+      DO_SCHEDULE=1
+      _ut_next=$((_ut_i + 1))
+      if [ "$_ut_next" -le $# ]; then
+        eval "_ut_narg=\${$_ut_next}"
+        case "$_ut_narg" in
+          --*) ;;
+          *) SCHEDULE_INTERVAL="$_ut_narg"; _ut_i=$_ut_next ;;
+        esac
+      fi
+      ;;
+    --unschedule)    DO_UNSCHEDULE=1 ;;
     -h|--help)
       updatetools_print_help "$(updatetools_resolve_self)" || exit 1
       exit 0
@@ -268,12 +316,28 @@ while [ $# -gt 0 ]; do
       updatetools_self_update || exit 1
       exit 0
       ;;
-    *) echo "Unknown option: $1" >&2; exit 2 ;;
+    *) echo "Unknown option: $_ut_arg" >&2; exit 2 ;;
   esac
-  shift
+  _ut_i=$((_ut_i + 1))
+
 done
+unset _ut_i _ut_arg _ut_next _ut_narg
+
+if [ "$DO_SCHEDULE" = "1" ] && [ "$DO_UNSCHEDULE" = "1" ]; then
+  echo "Cannot combine --schedule and --unschedule." >&2
+  exit 2
+fi
+if [ "$FLAG_NO_NOTIFY" = "1" ] && [ "$FLAG_NOTIFY_ON_ERROR" = "1" ]; then
+  echo "Cannot combine --no-notify and --notify-on-error." >&2
+  exit 2
+fi
+case "$NOTIFY_MODE" in
+  always|never|on_error) ;;
+  *) echo "Invalid NOTIFY_MODE='$NOTIFY_MODE' (want always|never|on_error)." >&2; exit 2 ;;
+esac
+
 [ "$GREEDY" = "1" ] && GREEDY_FLAG="--greedy" || GREEDY_FLAG=""
-export CLOSE_APPS QUIET_APPS MAKE_REPORT OPEN_REPORT DEBUG
+export CLOSE_APPS QUIET_APPS MAKE_REPORT OPEN_REPORT DEBUG NOTIFY_MODE
 
 # Homebrew env
 if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -4142,6 +4206,9 @@ export GIT_TERMINAL_PROMPT=0
   [ -r "${UT_LASTREPORT:-/nonexistent}" ] && UT_WEB_REPORT="$(cat "$UT_LASTREPORT" 2>/dev/null)"
   [ -r "${UT_WEB_DATA:-/nonexistent}" ] && UT_WEB_UPDATES="$(ut_web_updates "$UT_WEB_DATA")"
   ut_web_state done
+  # One notification for the whole run (not per step), once we know the outcome.
+  UT_RUN_FAILS=$fail_n
+  ut_notify_end "$fail_n"
 
   if [ "${DEBUG:-0}" = "1" ]; then
     [ -n "${UT_WEB_REPORT:-}" ] && printf 'report: %s\n' "$UT_WEB_REPORT"
@@ -4228,11 +4295,280 @@ run_plain() {
     esac
   done
   note "$done_n done · $skip_n skipped · $fail_n failed · $(fmt_time $((SECONDS-T0))) elapsed"
+  UT_RUN_FAILS=$fail_n
+  ut_notify_end "$fail_n"
 }
 
 
+# ===========================================================================
+# Schedule (launchd) + end-of-run notifications
+# ===========================================================================
+
+# Resolve this script to an absolute path at schedule time (follow symlinks).
+ut_resolve_self() {
+  local src="${1:-$0}" dir target
+  while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)" || return 1
+    target="$(readlink "$src")" || return 1
+    case "$target" in
+      /*) src="$target" ;;
+      *)  src="$dir/$target" ;;
+    esac
+  done
+  dir="$(cd -P "$(dirname "$src")" && pwd)" || return 1
+  printf '%s/%s\n' "$dir" "$(basename "$src")"
+}
+
+# ut_parse_interval [value]
+# Prints one of:
+#   interval <seconds>
+#   calendar <hour> <minute>
+# Empty/omitted value => interval 86400. Exits 1 with a specific error on junk.
+ut_parse_interval() {
+  local value="${1:-}" amount unit seconds hour minute
+  if [ -z "$value" ]; then
+    printf 'interval %s\n' "86400"
+    return 0
+  fi
+  # Daily wall-clock: H:MM or HH:MM (24-hour).
+  if printf '%s\n' "$value" | grep -Eq '^[0-9]{1,2}:[0-5][0-9]$'; then
+    hour="${value%%:*}"
+    minute="${value##*:}"
+    # Strip a single leading zero without octal surprises (bash 3.2).
+    hour=$((10#$hour))
+    minute=$((10#$minute))
+    if [ "$hour" -gt 23 ]; then
+      echo "Invalid schedule interval '$value': hour must be 0–23." >&2
+      return 1
+    fi
+    printf 'calendar %s %s\n' "$hour" "$minute"
+    return 0
+  fi
+  # Relative: bare seconds, or <digits><s|m|h|d|w>.
+  if printf '%s\n' "$value" | grep -Eq '^[0-9]+[smhdwSMHDW]?$'; then
+    unit="$(printf '%s\n' "$value" | sed -E 's/^[0-9]+//;y/SMHDW/smhdw/')"
+    amount="$(printf '%s\n' "$value" | sed -E 's/[smhdwSMHDW]$//')"
+    amount=$((10#$amount))
+    if [ "$amount" -le 0 ]; then
+      echo "Invalid schedule interval '$value': duration must be positive." >&2
+      return 1
+    fi
+    case "$unit" in
+      ""|s) seconds=$amount ;;
+      m) seconds=$((amount * 60)) ;;
+      h) seconds=$((amount * 60 * 60)) ;;
+      d) seconds=$((amount * 24 * 60 * 60)) ;;
+      w) seconds=$((amount * 7 * 24 * 60 * 60)) ;;
+      *)
+        echo "Invalid schedule interval '$value'." >&2
+        return 1
+        ;;
+    esac
+    printf 'interval %s\n' "$seconds"
+    return 0
+  fi
+  echo "Invalid schedule interval '$value' (want seconds, 30m, 12h, 1d, 1w, or HH:MM)." >&2
+  return 1
+}
+
+ut_launch_agents_dir() {
+  printf '%s\n' "${UT_LAUNCH_AGENTS_DIR:-$HOME/Library/LaunchAgents}"
+}
+
+ut_launch_plist_path() {
+  printf '%s/%s.plist\n' "$(ut_launch_agents_dir)" "$UT_LAUNCH_LABEL"
+}
+
+# Escape a string for use inside an AppleScript double-quoted literal.
+ut_osascript_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+ut_xml_escape() {
+  printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g'
+}
+
+# Desktop notification once per run. $1 = failure count (0 = clean).
+ut_notify_end() {
+  local fails="${1:-0}" msg esc
+  case "${NOTIFY_MODE:-always}" in
+    never) return 0 ;;
+    on_error)
+      [ "$fails" -gt 0 ] 2>/dev/null || return 0
+      ;;
+    always) ;;
+    *)
+      echo "updatetools: unknown NOTIFY_MODE='${NOTIFY_MODE}' — not notifying." >&2
+      return 1
+      ;;
+  esac
+  if [ "$fails" -gt 0 ] 2>/dev/null; then
+    if [ "$fails" -eq 1 ]; then
+      msg="Run finished with 1 failure."
+    else
+      msg="Run finished with $fails failures."
+    fi
+  else
+    msg="Run finished cleanly."
+  fi
+  esc="$(ut_osascript_escape "$msg")"
+  if ! osascript -e "display notification \"$esc\" with title \"updatetools\"" \
+       >/dev/null 2>&1; then
+    echo "updatetools: desktop notification failed (osascript)." >&2
+    return 1
+  fi
+  return 0
+}
+
+# Write a LaunchAgent plist to $1 for program $2.
+# Remaining schedule comes from ut_parse_interval output in $3 $4 [$5].
+# Notify flags currently in NOTIFY_MODE are baked into ProgramArguments.
+ut_write_schedule_plist() {
+  local out="$1" program="$2" kind="$3" a="${4:-}" b="${5:-}"
+  local notify_arg="" prog_xml notify_xml
+  case "${NOTIFY_MODE:-always}" in
+    never) notify_arg="--no-notify" ;;
+    on_error) notify_arg="--notify-on-error" ;;
+  esac
+  prog_xml="$(ut_xml_escape "$program")"
+  notify_xml="$(ut_xml_escape "$notify_arg")"
+
+  {
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+    printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+    printf '%s\n' '<plist version="1.0">'
+    printf '%s\n' '<dict>'
+    printf '%s\n' '  <key>Label</key>'
+    printf '%s\n' "  <string>${UT_LAUNCH_LABEL}</string>"
+    printf '%s\n' '  <key>ProgramArguments</key>'
+    printf '%s\n' '  <array>'
+    printf '%s\n' "    <string>${prog_xml}</string>"
+    printf '%s\n' '    <string>--plain</string>'
+    if [ -n "$notify_arg" ]; then
+      printf '%s\n' "    <string>${notify_xml}</string>"
+    fi
+    printf '%s\n' '  </array>'
+    if [ "$kind" = "calendar" ]; then
+      printf '%s\n' '  <key>StartCalendarInterval</key>'
+      printf '%s\n' '  <dict>'
+      printf '%s\n' '    <key>Hour</key>'
+      printf '%s\n' "    <integer>${a}</integer>"
+      printf '%s\n' '    <key>Minute</key>'
+      printf '%s\n' "    <integer>${b}</integer>"
+      printf '%s\n' '  </dict>'
+    else
+      printf '%s\n' '  <key>StartInterval</key>'
+      printf '%s\n' "  <integer>${a}</integer>"
+    fi
+    printf '%s\n' '  <key>RunAtLoad</key>'
+    printf '%s\n' '  <false/>'
+    printf '%s\n' '</dict>'
+    printf '%s\n' '</plist>'
+  } > "$out" || {
+    echo "Could not write LaunchAgent plist to $out." >&2
+    return 1
+  }
+}
+
+ut_schedule() {
+  local parsed kind a b program plist_dir plist uid domain
+  parsed="$(ut_parse_interval "${SCHEDULE_INTERVAL:-}")" || return 1
+  kind="${parsed%% *}"
+  a="$(printf '%s\n' "$parsed" | awk '{print $2}')"
+  b="$(printf '%s\n' "$parsed" | awk '{print $3}')"
+
+  program="$(ut_resolve_self "$0")" || {
+    echo "Could not resolve path to updatetools (\$0='$0')." >&2
+    return 1
+  }
+  if [ ! -x "$program" ] && [ ! -f "$program" ]; then
+    echo "Resolved updatetools path is missing: $program" >&2
+    return 1
+  fi
+
+  plist_dir="$(ut_launch_agents_dir)"
+  if [ ! -d "$plist_dir" ]; then
+    echo "LaunchAgents directory does not exist: $plist_dir" >&2
+    echo "Create it and retry (mkdir -p \"$plist_dir\")." >&2
+    return 1
+  fi
+  plist="$(ut_launch_plist_path)"
+
+  ut_write_schedule_plist "$plist" "$program" "$kind" "$a" "$b" || return 1
+  if ! plutil -lint "$plist" >/dev/null; then
+    echo "Wrote invalid LaunchAgent plist: $plist" >&2
+    plutil -lint "$plist" >&2 || true
+    return 1
+  fi
+
+  # UT_SCHEDULE_NO_LOAD=1: write+lint only (tests). Never leave a real job loaded
+  # when pointed at this script's update path from automated verification.
+  if [ "${UT_SCHEDULE_NO_LOAD:-0}" = "1" ]; then
+    printf 'Wrote %s (not loaded; UT_SCHEDULE_NO_LOAD=1)\n' "$plist"
+    return 0
+  fi
+
+  uid="$(id -u)"
+  domain="gui/${uid}"
+  if launchctl print "${domain}/${UT_LAUNCH_LABEL}" >/dev/null 2>&1; then
+    if ! launchctl bootout "${domain}/${UT_LAUNCH_LABEL}"; then
+      echo "launchctl bootout ${domain}/${UT_LAUNCH_LABEL} failed." >&2
+      return 1
+    fi
+  fi
+  if ! launchctl bootstrap "$domain" "$plist"; then
+    echo "launchctl bootstrap $domain $plist failed." >&2
+    return 1
+  fi
+  if [ "$kind" = "calendar" ]; then
+    printf 'Scheduled %s daily at %02d:%02d (label %s).\n' \
+      "$program" "$a" "$b" "$UT_LAUNCH_LABEL"
+  else
+    printf 'Scheduled %s every %s seconds (label %s).\n' \
+      "$program" "$a" "$UT_LAUNCH_LABEL"
+  fi
+}
+
+ut_unschedule() {
+  local plist uid domain loaded=0
+  plist="$(ut_launch_plist_path)"
+  uid="$(id -u)"
+  domain="gui/${uid}"
+
+  if launchctl print "${domain}/${UT_LAUNCH_LABEL}" >/dev/null 2>&1; then
+    loaded=1
+    if ! launchctl bootout "${domain}/${UT_LAUNCH_LABEL}"; then
+      echo "launchctl bootout ${domain}/${UT_LAUNCH_LABEL} failed." >&2
+      return 1
+    fi
+  fi
+
+  if [ -f "$plist" ]; then
+    if ! rm -f "$plist"; then
+      echo "Could not delete LaunchAgent plist: $plist" >&2
+      return 1
+    fi
+    printf 'Removed %s.\n' "$plist"
+  elif [ "$loaded" = "0" ]; then
+    echo "No LaunchAgent for ${UT_LAUNCH_LABEL} was loaded or installed." >&2
+    return 1
+  else
+    printf 'Unloaded %s (no plist file at %s).\n' "$UT_LAUNCH_LABEL" "$plist"
+  fi
+}
+
 if [ "${UPDATETOOLS_LIB_ONLY:-0}" = "1" ]; then
   return 0 2>/dev/null || exit 0
+fi
+
+# Schedule / unschedule exit before the update lock — they must not start a run.
+if [ "$DO_UNSCHEDULE" = "1" ]; then
+  ut_unschedule
+  exit $?
+fi
+if [ "$DO_SCHEDULE" = "1" ]; then
+  ut_schedule
+  exit $?
 fi
 
 # ===========================================================================

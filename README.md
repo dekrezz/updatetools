@@ -109,6 +109,9 @@ updatetools --no-greedy     # don't force-upgrade self-managing casks
 updatetools --no-manual-apps # skip apps installed manually from DMGs
 updatetools --version       # short revision of this copy
 updatetools --self-update   # replace this script with main from GitHub
+updatetools --schedule      # LaunchAgent: run --plain every 24h
+updatetools --schedule 12h  # every 12 hours (also: seconds, 30m, 1d, 1w, or HH:MM)
+updatetools --unschedule    # remove the LaunchAgent
 updatetools --help
 ```
 
@@ -135,6 +138,12 @@ the `UPDATETOOLS_REV` stamp written by `--self-update` or the Homebrew formula.
 | `--no-manual-apps` | Skip discovery and safe staging of manually installed DMG apps. |
 | `--version` | Print the short revision of this copy. |
 | `--self-update` | Replace the running script with `main` from GitHub. |
+| `--schedule [interval]` | Install a per-user LaunchAgent (`com.dekrezz.updatetools`) that runs `updatetools --plain`. Default interval: 24h. Replaces an existing agent. Interval: bare seconds, `30m` / `12h` / `1d` / `1w`, or `HH:MM` for a daily wall-clock time. Does not run an update at install time. |
+| `--unschedule` | Boot out and delete that LaunchAgent. |
+| `--no-notify` | Never show a desktop notification when a run ends. |
+| `--notify-on-error` | Notify only when at least one step failed (conflicts with `--no-notify`). |
+
+Default is to notify at the end of every run (dashboard and `--plain`, including the scheduled job) with text that says whether the run finished cleanly or had failures.
 
 ### Which steps run
 
@@ -164,6 +173,8 @@ Step keys (stable slugs, same as the ribbon where possible):
 | `QUIET_APPS=0` | `--no-manual-apps` |
 | `DEBUG=1` | `--debug` |
 | `UPDATETOOLS_ENABLED_FILE` | Override path for the saved enabled-step list. |
+| `NOTIFY_MODE=never` | `--no-notify` |
+| `NOTIFY_MODE=on_error` | `--notify-on-error` |
 | `UPDATETOOLS_CLOSE="a b"` | Force-close these cask apps to upgrade them now (space/comma list of tokens). |
 | `UPDATETOOLS_PROTECT="a b"` | Never close these cask apps. |
 | `BREW_CASK_SKIP="a b"` | Casks needing an interactive sudo password — kept out of the run and reported for manual upgrade (default `stats aldente`). |
