@@ -28,7 +28,8 @@ html = open(sys.argv[1]).read()
 ids = re.findall(r'id="(ribbon|clock|legend|steps)"', html)
 print(' '.join(ids))
 PY
-assert_eq "header order ribbon before clock" "ribbon clock legend steps" "$(cat "$tmp/order.txt")"
+assert_eq "header order clock then ribbon then legend" "clock ribbon legend steps" "$(cat "$tmp/order.txt")"
+grep -q 'id="select-all"' "$tmp/page.html" && pass "select all control" || fail "select all control"
 
 # Drive the named selection helpers extracted from the generated page.
 node - "$tmp/page.html" <<'NODE'

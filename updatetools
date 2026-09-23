@@ -1204,13 +1204,23 @@ ut_capture_brew_before() {
   done
 }
 
+# CLI versions have to be snapshotted before any step runs. The Homebrew step
+# used to be the only caller, so a run that skipped Homebrew (Claude Code alone,
+# for example) had no "before" and the dashboard reported nothing changed.
+ut_report_capture_cli() {
+  [ "${MAKE_REPORT:-1}" = "1" ] || return 0
+  mkdir -p "$UT_REPORT_DIR" 2>/dev/null || return 0
+  [ -f "$UT_REPORT_DIR/cli" ] && return 0
+  ut_capture_cli_versions > "$UT_REPORT_DIR/cli" 2>/dev/null || true
+}
+
 ut_report_begin() {
   [ "${MAKE_REPORT:-1}" = "1" ] || return 0
   mkdir -p "$UT_REPORT_DIR" 2>/dev/null || return 0
   [ -f "$UT_REPORT_DIR/.began" ] && return 0   # idempotent: only the first call captures
   : > "$UT_REPORT_DIR/.began"
   ut_capture_brew_before   > "$UT_REPORT_DIR/brew" 2>/dev/null || true
-  ut_capture_cli_versions  > "$UT_REPORT_DIR/cli"  2>/dev/null || true
+  ut_report_capture_cli
   return 0
 }
 
@@ -2297,8 +2307,8 @@ try {
   }
   @keyframes app-in{from{opacity:0;transform:translateY(8px)}}
 
-  /* The header is the run itself: selected-step ribbon above the clock,
-     then a legend; each ribbon segment takes the width of time spent. */
+  /* The header is the run itself: the clock, then the time ribbon, then the
+     legend. Each ribbon segment takes the width of the time that step spent. */
   .masthead{padding:0 0 2.25rem}
   .mast-row{display:flex; align-items:baseline; justify-content:space-between; gap:1rem}
   h1{
@@ -2306,13 +2316,13 @@ try {
     letter-spacing:-.02em; font-weight:600; color:var(--text);
   }
   .phase{color:var(--text-3); font-size:.875rem; font-variant-numeric:tabular-nums}
-  .ribbon{
-    display:flex; gap:3px; height:2.25rem; margin:1.6rem 0 0;
-  }
   .clock{
     margin:1.1rem 0 0; color:var(--text);
     font:400 clamp(4.5rem,15vw,8.5rem)/.82 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
     letter-spacing:-.055em; font-variant-numeric:tabular-nums lining-nums;
+  }
+  .ribbon{
+    display:flex; gap:3px; height:2.25rem; margin:1.15rem 0 0;
   }
   .seg{
     flex:1 1 0; min-width:.9rem; border-radius:7px;
@@ -2438,6 +2448,14 @@ try {
     display:none; margin:1.25rem 0 0; padding:0 .4rem;
   }
   .chooser-bar.on{display:block}
+  .chooser-bar .select-all{
+    appearance:none; cursor:pointer; width:100%; margin:0 0 .65rem;
+    background:transparent; color:var(--text-2);
+    border:1px solid var(--hairline-strong); border-radius:16px; padding:.85rem 1.2rem;
+    font:600 .9375rem/1.1 var(--sans); letter-spacing:-.02em;
+  }
+  .chooser-bar .select-all:hover{color:var(--text); border-color:var(--text-3)}
+  .chooser-bar .select-all:focus-visible{outline:2px solid var(--text); outline-offset:3px}
   .chooser-bar .start{
     appearance:none; cursor:pointer; width:100%;
     display:flex; align-items:center; justify-content:center; gap:.65rem;
@@ -2729,6 +2747,19 @@ try {
   .eye .off{opacity:0}
   .sheet.reveal .eye .on{opacity:0}
   .sheet.reveal .eye .off{opacity:1}
+  .sheet.wrong-layout .eye{pointer-events:none; cursor:default}
+  .sheet.wrong-layout .eye .on{opacity:0; transform:scaleY(.15)}
+  .sheet.wrong-layout .eye .off{opacity:1}
+  .layout-note{
+    margin:-.25rem 0 0; padding:0;
+    font-size:.8125rem; line-height:1.35; color:var(--text-2); letter-spacing:-.01em;
+  }
+  .layout-note[hidden]{display:none}
+  .layout-note b{color:var(--text); font-weight:600}
+  .layout-note.in{animation:lang-in .42s cubic-bezier(.2,.8,.2,1)}
+  .layout-note.in b{display:inline-block; animation:lang-pop .5s cubic-bezier(.2,.8,.2,1)}
+  @keyframes lang-in{from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none}}
+  @keyframes lang-pop{from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none}}
   .go{
     width:2.75rem; height:2.75rem; padding:0; border-radius:50%; border:1px solid transparent;
     background:var(--go-bg); color:var(--go-fg); display:grid; place-items:center;
@@ -2756,7 +2787,7 @@ try {
   @media (prefers-reduced-motion: reduce){
     .step.run .step-state svg{animation:none}
     .wrap,.step,.step.done .step-state svg{animation:none;opacity:1;transform:none}
-    .info-tip,.note,.report-panel,.ledger.show,.ledger.hide,.record svg{transition:none;animation:none;filter:none;transform:none}
+    .info-tip,.note,.report-panel,.ledger.show,.ledger.hide,.record svg,.layout-note,.layout-note b,.eye svg{transition:none;animation:none;filter:none;transform:none}
     .ledger.show,.ledger.hide{clip-path:none}
     .seg{transition:none}
     .seg.run{animation:none}
@@ -2796,13 +2827,14 @@ try {
         <h1>updatetools</h1>
         <span class="phase" id="phase">starting…</span>
       </div>
-      <div class="ribbon" id="ribbon" aria-hidden="true"></div>
       <div class="clock" id="clock" aria-live="off">00:00</div>
+      <div class="ribbon" id="ribbon" aria-hidden="true"></div>
       <ul class="legend" id="legend"></ul>
     </header>
 
     <section class="steps" id="steps"></section>
     <div class="chooser-bar" id="chooser-bar">
+      <button type="button" class="select-all" id="select-all">Select all</button>
       <button type="button" class="start" id="start-run">
         Start update
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
@@ -2859,6 +2891,7 @@ try {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
         </button>
       </form>
+      <p class="layout-note" id="layout-note" hidden></p>
     </div>
   </div>
 WEB_HTML_HEAD
@@ -3047,7 +3080,9 @@ WEB_HTML_HEAD
         st.phase === 'done'
           ? [`${counts.done} steps completed`, counts.skip ? `${counts.skip} skipped` : '', counts.fail ? `${counts.fail} failed` : ''].filter(Boolean).join(' · ')
                             : `${counts.done + counts.skip + counts.fail} of ${counts.total} steps`;
-      $('clock').textContent = fmt(st.elapsed || 0);
+      // Password entry is not part of the run. The clock stays at 00:00 until
+      // the tools themselves start, then counts only their time.
+      $('clock').textContent = st.prompt ? '00:00' : fmt(st.elapsed || 0);
     }
     paintRibbon(st);
 
@@ -3088,6 +3123,7 @@ WEB_HTML_HEAD
         if (s.s === 'run') setStepTail(next, st.tail);
       });
       while (list.children.length > rows.length) list.lastElementChild.remove();
+      if (st.phase === 'choose') syncSelectAllLabel();
       if (!list.classList.contains('ready') && !stepsReadyTimer) {
         stepsReadyTimer = setTimeout(() => list.classList.add('ready'), 450);
       }
@@ -3378,8 +3414,59 @@ WEB_HTML_HEAD
   let chal = [];
   let revealed = false;
   let hideTimer = 0;
+  let layoutNow = '';
+  let layoutPass = 'English';
   const HIDE_AFTER = 120000;
   const scrim = $('scrim'), sheet = $('pwform'), chalInput = $('ut-chal'), eyeBtn = $('ut-chal-eye');
+  const layoutNote = $('layout-note');
+  function layoutsDiffer(now, pass) {
+    return !!(now && pass && now !== pass);
+  }
+  function scriptOf(ch) {
+    if (!ch || ch.length !== 1) return '';
+    const c = ch.codePointAt(0);
+    if (c >= 0x0400 && c <= 0x04FF) return 'Russian';
+    if (c >= 0x0370 && c <= 0x03FF) return 'Greek';
+    if (c >= 0x0590 && c <= 0x05FF) return 'Hebrew';
+    if (c >= 0x0600 && c <= 0x06FF) return 'Arabic';
+    if (c >= 0x3040 && c <= 0x30FF) return 'Japanese';
+    if (c >= 0xAC00 && c <= 0xD7AF) return 'Korean';
+    if (c >= 0x4E00 && c <= 0x9FFF) return 'Chinese';
+    if ((c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A)) return 'Latin';
+    return '';
+  }
+  function paintLayout() {
+    const mismatch = layoutsDiffer(layoutNow, layoutPass);
+    sheet.classList.toggle('wrong-layout', mismatch);
+    if (mismatch) {
+      if (revealed) setRevealed(false);
+      eyeBtn.disabled = true;
+      const msg = `You're using ${layoutNow} instead of ${layoutPass}`;
+      if (layoutNote.dataset.msg !== msg) {
+        layoutNote.dataset.msg = msg;
+        layoutNote.innerHTML = `You're using <b>${escapeHtml(layoutNow)}</b> instead of <b>${escapeHtml(layoutPass)}</b>`;
+        layoutNote.hidden = false;
+        layoutNote.classList.remove('in');
+        void layoutNote.offsetWidth;
+        layoutNote.classList.add('in');
+      }
+    } else {
+      eyeBtn.disabled = false;
+      layoutNote.hidden = true;
+      layoutNote.classList.remove('in');
+      layoutNote.dataset.msg = '';
+    }
+  }
+  function applyLayout(now, pass) {
+    if (pass) layoutPass = pass;
+    if (now) layoutNow = now;
+    paintLayout();
+  }
+  function noteTypedLayout(ch) {
+    const lang = scriptOf(ch);
+    if (!lang || lang === 'Latin') return;
+    if (lang !== layoutPass) applyLayout(lang, layoutPass);
+  }
   function paintChal() {
     chalInput.textContent = revealed ? chal.join('') : '•'.repeat(chal.length);
     if (asking && document.activeElement === chalInput) placeCaretEnd();
@@ -3422,6 +3509,9 @@ WEB_HTML_HEAD
     scrim.classList.remove('on');
     chalClear();
     setEditable(false);
+    layoutNow = '';
+    layoutPass = 'English';
+    paintLayout();
   }
   async function submitChal() {
     const reply = chal.join('');
@@ -3453,18 +3543,31 @@ WEB_HTML_HEAD
       e.preventDefault();
       return;
     }
-    if (e.key.length === 1) { e.preventDefault(); chal.push(e.key); paintChal(); noteActivity(); }
+    if (e.key.length === 1) {
+      e.preventDefault();
+      chal.push(e.key);
+      paintChal();
+      noteActivity();
+      noteTypedLayout(e.key);
+    }
   });
   chalInput.addEventListener('paste', (e) => {
     e.preventDefault();
     const t = (e.clipboardData && e.clipboardData.getData('text')) || '';
-    for (const c of t) if (c !== '\n' && c !== '\r') chal.push(c);
+    for (const c of t) {
+      if (c === '\n' || c === '\r') continue;
+      chal.push(c);
+      noteTypedLayout(c);
+    }
     paintChal();
     noteActivity();
   });
   chalInput.addEventListener('beforeinput', (e) => e.preventDefault());
   chalInput.addEventListener('input', paintChal);
-  eyeBtn.addEventListener('click', () => setRevealed(!revealed));
+  eyeBtn.addEventListener('click', () => {
+    if (eyeBtn.disabled || sheet.classList.contains('wrong-layout')) return;
+    setRevealed(!revealed);
+  });
   $('ut-chal-go').addEventListener('click', submitChal);
   const infoBtn = sheet.querySelector('.info');
   const tipOn = (on) => infoBtn.classList.toggle('open', on);
@@ -3525,6 +3628,27 @@ WEB_HTML_HEAD
     el.setAttribute('aria-checked', on ? 'true' : 'false');
     syncChooseLocalFromDom();
     lastSig = '';
+    syncSelectAllLabel();
+    if (latestState) paintRibbon(latestState);
+  }
+  function syncSelectAllLabel() {
+    const btn = $('select-all');
+    if (!btn) return;
+    const kids = Array.from($('steps').children);
+    const allOn = kids.length > 0 && kids.every((el) => el.classList.contains('on'));
+    btn.textContent = allOn ? 'Unselect all' : 'Select all';
+  }
+  function setAllChosen(on) {
+    if (latestPhase !== 'choose') return;
+    if (!chooseLocal) syncChooseLocalFromDom();
+    chooseLocal = chooseLocal.map(() => on);
+    Array.from($('steps').children).forEach((el) => {
+      el.classList.toggle('on', on);
+      el.classList.toggle('off', !on);
+      el.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    lastSig = '';
+    syncSelectAllLabel();
     if (latestState) paintRibbon(latestState);
   }
   $('steps').addEventListener('click', (e) => {
@@ -3545,6 +3669,12 @@ WEB_HTML_HEAD
     e.preventDefault();
     if (latestPhase === 'choose') { toggleChooseStep(el); return; }
     toggleStepLog(el, el.dataset.label);
+  });
+  $('select-all').addEventListener('click', () => {
+    if (latestPhase !== 'choose' || startSent) return;
+    const kids = Array.from($('steps').children);
+    const allOn = kids.length > 0 && kids.every((el) => el.classList.contains('on'));
+    setAllChosen(!allOn);
   });
   $('start-run').addEventListener('click', async () => {
     if (startSent || latestPhase !== 'choose') return;
@@ -3587,7 +3717,10 @@ WEB_HTML_HEAD
       misses = 0;
       render(st);
       renderFiles(st);
-      if (st.prompt) askPassword(st.prompt); else if (asking) hidePassword();
+      if (st.prompt) {
+        askPassword(st.prompt);
+        applyLayout(st.layoutNow || '', st.layoutPass || 'English');
+      } else if (asking) hidePassword();
       loadLog();
       if (st.phase === 'done') { setTimeout(poll, 2000); return; }
     } catch (e) {
@@ -3602,6 +3735,84 @@ WEB_HTML_HEAD
 </body>
 </html>
 WEB_HTML_TAIL
+}
+
+# ut_layout_language ID — English name of a macOS input source.
+# Empty input fails. Unknown ids keep their layout name (not guessed).
+ut_layout_language() {
+  local raw="${1-}" s
+  raw="${raw//$'\r'/}"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  raw="${raw//\"/}"
+  case "$raw" in
+    com.apple.keylayout.*) s="${raw#com.apple.keylayout.}" ;;
+    com.apple.inputmethod.*) s="${raw#com.apple.inputmethod.}" ;;
+    *) s="$raw" ;;
+  esac
+  case "$s" in
+    US|ABC|ABC-AZERTY|ABC-QWERTZ|USInternational|USInternational-PC|USExtended|British|Australian|Canadian|Colemak|Dvorak|Dvorak-Left|Dvorak-Right|U.S.|English)
+      printf '%s\n' English ;;
+    Russian|RussianWin|Russian-Phonetic) printf '%s\n' Russian ;;
+    Ukrainian|Ukrainian-PC) printf '%s\n' Ukrainian ;;
+    German|German-DIN-2137|Austrian) printf '%s\n' German ;;
+    French|French-PC|French-numerical|SwissFrench) printf '%s\n' French ;;
+    Spanish|Spanish-ISO) printf '%s\n' Spanish ;;
+    Italian|Italian-Pro) printf '%s\n' Italian ;;
+    Portuguese|Brazilian) printf '%s\n' Portuguese ;;
+    Polish|PolishPro) printf '%s\n' Polish ;;
+    Turkish|Turkish-Q) printf '%s\n' Turkish ;;
+    Hebrew) printf '%s\n' Hebrew ;;
+    Arabic|Arabic-PC) printf '%s\n' Arabic ;;
+    Greek|GreekPolytonic) printf '%s\n' Greek ;;
+    SCIM|TCIM|Pinyin|Chinese) printf '%s\n' Chinese ;;
+    Japanese|Kotoeri|Romaji) printf '%s\n' Japanese ;;
+    Korean|Hangul) printf '%s\n' Korean ;;
+    '') return 1 ;;
+    *) printf '%s\n' "$s" ;;
+  esac
+}
+
+# Current keyboard, and the language a sudo password was last accepted in.
+# Missing file means English — the usual password layout until one succeeds.
+ut_password_layout_file() {
+  printf '%s\n' "${UPDATETOOLS_PASSWORD_LAYOUT:-$HOME/.config/updatetools/password-layout}"
+}
+ut_read_input_source() {
+  local id f passid
+  id=$(defaults read "$HOME/Library/Preferences/com.apple.HIToolbox" AppleCurrentKeyboardLayoutInputSourceID 2>/dev/null) || id=""
+  id="${id//\"/}"
+  UT_LAYOUT_ID="$id"
+  if [ -n "$id" ]; then
+    UT_LAYOUT_NOW=$(ut_layout_language "$id") || UT_LAYOUT_NOW=""
+  else
+    UT_LAYOUT_NOW=""
+  fi
+  f="$(ut_password_layout_file)"
+  if [ -r "$f" ]; then
+    IFS= read -r passid < "$f" || passid=""
+    UT_LAYOUT_PASS=$(ut_layout_language "$passid") || UT_LAYOUT_PASS="English"
+  else
+    UT_LAYOUT_PASS="English"
+  fi
+}
+ut_remember_password_layout() {
+  local id="${1:-${UT_LAYOUT_ID:-}}" f dir
+  [ -n "$id" ] || return 0
+  f="$(ut_password_layout_file)"
+  dir=$(dirname "$f")
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    echo "updatetools: cannot save password keyboard layout: $dir" >&2
+    return 0
+  fi
+  if ! printf '%s\n' "$id" > "$f.tmp.$$"; then
+    echo "updatetools: cannot save password keyboard layout: $f" >&2
+    return 0
+  fi
+  if ! mv -f "$f.tmp.$$" "$f"; then
+    rm -f "$f.tmp.$$"
+    echo "updatetools: cannot save password keyboard layout: $f" >&2
+  fi
 }
 
 # ut_web_state PHASE — write state.json atomically (the page may read at any time).
@@ -3651,6 +3862,10 @@ ut_web_state() {
       "$phase" "$((SECONDS-T0))" "$TOTAL" "$done_n" "$skip_n" "$fail_n"
     printf ',"tail":"%s"' "$(ut_json_escape "$tail_line")"
     [ -n "${UT_PROMPT:-}" ] && printf ',"prompt":"%s"' "$(ut_json_escape "$UT_PROMPT")"
+    if [ -n "${UT_PROMPT:-}" ]; then
+      [ -n "${UT_LAYOUT_NOW:-}" ] && printf ',"layoutNow":"%s"' "$(ut_json_escape "$UT_LAYOUT_NOW")"
+      [ -n "${UT_LAYOUT_PASS:-}" ] && printf ',"layoutPass":"%s"' "$(ut_json_escape "$UT_LAYOUT_PASS")"
+    fi
     printf ',"debug":%s' "$([ "${DEBUG:-0}" = "1" ] && echo true || echo false)"
     [ "${DEBUG:-0}" = "1" ] && printf ',"log":"%s"' "$(ut_json_escape "$LOG")"
     [ "${DEBUG:-0}" = "1" ] && [ -n "${UT_WEB_REPORT:-}" ] && printf ',"report":"%s"' "$(ut_json_escape "$UT_WEB_REPORT")"
@@ -3695,6 +3910,8 @@ ut_web_ask() {
   fi
   UT_PROMPT="${1:-Password:}"
   rm -f "$PROMPT_REP"
+  ut_read_input_source
+  local seen="${UT_LAYOUT_NOW}"
   ut_web_state run
   while [ ! -s "$PROMPT_REP" ]; do
     sleep 0.2
@@ -3702,7 +3919,16 @@ ut_web_ask() {
     if [ "$waited" -gt "$limit" ]; then UT_PROMPT=""; ut_web_state run; return 1; fi
     # the tab was closed / server gone: nobody can answer any more
     kill -0 "$WEB_PID" 2>/dev/null || { UT_PROMPT=""; return 1; }
+    if [ $((waited % 2)) -eq 0 ]; then
+      ut_read_input_source
+      if [ "$UT_LAYOUT_NOW" != "$seen" ]; then
+        seen="$UT_LAYOUT_NOW"
+        ut_web_state run
+      fi
+    fi
   done
+  ut_read_input_source
+  UT_LAYOUT_ACCEPTED="${UT_LAYOUT_ID:-}"
   UT_PROMPT=""
   SUDO_PW=$(cat "$PROMPT_REP" 2>/dev/null)   # in memory only, never written out
   ut_web_state run
@@ -4042,7 +4268,11 @@ sudo_prime() {
   local i
   for i in 1 2 3; do
     ut_web_ask "$([ "$i" = 1 ] && echo 'Password' || echo 'Wrong password — try again')" force || return 1
-    if sudo -S -v < "$PROMPT_REP" 2>/dev/null; then rm -f "$PROMPT_REP"; return 0; fi
+    if sudo -S -v < "$PROMPT_REP" 2>/dev/null; then
+      rm -f "$PROMPT_REP"
+      ut_remember_password_layout "${UT_LAYOUT_ACCEPTED:-}"
+      return 0
+    fi
     SUDO_PW=""            # it was wrong: don't reuse it for the steps
     rm -f "$PROMPT_REP"
   done
@@ -4142,14 +4372,14 @@ export GIT_TERMINAL_PROMPT=0
   ut_save_enabled
   rm -f "$WEB_DIR/start"
 
-  T0=$SECONDS
   sudo_prime || true
+  # Password time is not part of the run. The clock starts when tools start.
+  T0=$SECONDS
   ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
   SUDO_KEEPER=$!
 
-  # With no Homebrew step there is nowhere to take the pre-update snapshot;
-  # still capture standalone CLI versions for the final report.
-  have brew || ut_report_begin
+  # Before any step, including when Homebrew itself is turned off.
+  ut_report_capture_cli
 
   local entry guard cmd pid rc stalled last_size last_change size prompt reply
   for ((i=0;i<TOTAL;i++)); do
@@ -4232,6 +4462,10 @@ export GIT_TERMINAL_PROMPT=0
       fail) fail_n=$((fail_n+1)) ;;
     esac
   done
+  # The Report step may be off. The diff still has to land on the dashboard.
+  if [ ! -s "${UT_WEB_DATA:-}" ]; then
+    ut_generate_report >/dev/null || true
+  fi
   [ -r "${UT_LASTREPORT:-/nonexistent}" ] && UT_WEB_REPORT="$(cat "$UT_LASTREPORT" 2>/dev/null)"
   [ -r "${UT_WEB_DATA:-/nonexistent}" ] && UT_WEB_UPDATES="$(ut_web_updates "$UT_WEB_DATA")"
   ut_web_state done
@@ -4257,7 +4491,6 @@ run_plain() {
   section() { printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
   note()    { printf '   %s\n' "$*"; }
 
-  T0=$SECONDS
   LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
   : > "$LOG"
   for ((i=0;i<TOTAL;i++)); do
@@ -4275,8 +4508,9 @@ run_plain() {
   else
     sudo -n true 2>/dev/null || true
   fi
+  T0=$SECONDS
 
-  have brew || ut_report_begin
+  ut_report_capture_cli
 
   for ((i=0;i<TOTAL;i++)); do
     CUR_STEP=$i

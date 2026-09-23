@@ -253,7 +253,9 @@ it in your default browser, and prints nothing. The page shows every step with a
 toggle before the run, waits for you to press Start, then shows live progress with
 per-step durations and the version diff at the end; hovering a step opens that
 step's output. Passwords are asked for **in the page** — nothing is echoed as
-you type — and the answer goes straight to `sudo`.
+you type — and the answer goes straight to `sudo`. If the keyboard is not the
+language that password was accepted in (English until one succeeds), the reveal
+control closes and the sheet says which language is on instead.
 
 Access is locked down: loopback only, a random per-run token exchanged for an
 `HttpOnly` cookie (everything else is `403`), a `Host` check against DNS
