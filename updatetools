@@ -2297,8 +2297,8 @@ try {
   }
   @keyframes app-in{from{opacity:0;transform:translateY(8px)}}
 
-  /* The header is the run itself: the clock, and a ribbon where every step
-     takes the width of the time it actually spent. */
+  /* The header is the run itself: selected-step ribbon above the clock,
+     then a legend; each ribbon segment takes the width of time spent. */
   .masthead{padding:0 0 2.25rem}
   .mast-row{display:flex; align-items:baseline; justify-content:space-between; gap:1rem}
   h1{
@@ -2306,13 +2306,13 @@ try {
     letter-spacing:-.02em; font-weight:600; color:var(--text);
   }
   .phase{color:var(--text-3); font-size:.875rem; font-variant-numeric:tabular-nums}
+  .ribbon{
+    display:flex; gap:3px; height:2.25rem; margin:1.6rem 0 0;
+  }
   .clock{
     margin:1.1rem 0 0; color:var(--text);
     font:400 clamp(4.5rem,15vw,8.5rem)/.82 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
     letter-spacing:-.055em; font-variant-numeric:tabular-nums lining-nums;
-  }
-  .ribbon{
-    display:flex; gap:3px; height:2.25rem; margin:1.6rem 0 0;
   }
   .seg{
     flex:1 1 0; min-width:.9rem; border-radius:7px;
@@ -2796,8 +2796,8 @@ try {
         <h1>updatetools</h1>
         <span class="phase" id="phase">starting…</span>
       </div>
-      <div class="clock" id="clock" aria-live="off">00:00</div>
       <div class="ribbon" id="ribbon" aria-hidden="true"></div>
+      <div class="clock" id="clock" aria-live="off">00:00</div>
       <ul class="legend" id="legend"></ul>
     </header>
 
@@ -2968,9 +2968,34 @@ WEB_HTML_HEAD
     const hex = path && path.getAttribute('fill');
     return hex && /^#[0-9a-f]{6}$/i.test(hex) ? hex : '#6b7280';
   }
+  // Selection filters: ribbon/legend/post-start list show only tools the user left on.
+  // During choose, #steps keeps every row (that's the toggles); ribbon still filters.
+  function stepSelected(s, i, phase, localOn) {
+    if (phase === 'choose') {
+      return localOn ? !!localOn[i] : s.on !== false;
+    }
+    return s.why !== 'off' && s.on !== false;
+  }
+  function stepsForRibbon(steps, phase, localOn) {
+    return (steps || []).filter((s, i) => s.slug !== 'report' && stepSelected(s, i, phase, localOn));
+  }
+  function stepsForList(steps, phase, localOn) {
+    if (phase === 'choose') return steps || [];
+    return (steps || []).filter((s, i) => stepSelected(s, i, phase, localOn));
+  }
+  function selectedCounts(steps, phase, localOn) {
+    const sel = (steps || []).filter((s, i) => stepSelected(s, i, phase, localOn));
+    let done = 0, skip = 0, fail = 0;
+    sel.forEach((s) => {
+      if (s.s === 'done') done++;
+      else if (s.s === 'skip') skip++;
+      else if (s.s === 'fail') fail++;
+    });
+    return { total: sel.length, done, skip, fail };
+  }
   function paintRibbon(st) {
     const rib = $('ribbon');
-    const steps = (st.steps || []).filter((s) => s.slug !== 'report');
+    const steps = stepsForRibbon(st.steps, st.phase, chooseLocal);
     const spent = (s) => s.s === 'run'
       ? Math.max(1, st.elapsed - (s.b ?? st.elapsed))
       : (s.t ?? 0);
@@ -3003,12 +3028,14 @@ WEB_HTML_HEAD
   }
 
   let lastSig = '', stepsReadyTimer = 0;
-  let latestUpdates = [], latestPhase = 'run';
+  let latestUpdates = [], latestPhase = 'run', latestState = null;
   let chooseLocal = null; // null = follow server; array of bools once the user toggles
   let startSent = false;
   function render(st) {
+    latestState = st;
     latestUpdates = st.updates || [];
     latestPhase = st.phase;
+    const counts = selectedCounts(st.steps, st.phase, chooseLocal);
     // header
     if (st.phase === 'choose') {
       $('phase').textContent = 'choose steps';
@@ -3018,15 +3045,16 @@ WEB_HTML_HEAD
       $('chooser-bar').classList.remove('on');
       $('phase').textContent =
         st.phase === 'done'
-          ? [`${st.done} steps completed`, st.skip ? `${st.skip} skipped` : '', st.fail ? `${st.fail} failed` : ''].filter(Boolean).join(' · ')
-                            : `${st.done + st.skip + st.fail} of ${st.total} steps`;
+          ? [`${counts.done} steps completed`, counts.skip ? `${counts.skip} skipped` : '', counts.fail ? `${counts.fail} failed` : ''].filter(Boolean).join(' · ')
+                            : `${counts.done + counts.skip + counts.fail} of ${counts.total} steps`;
       $('clock').textContent = fmt(st.elapsed || 0);
     }
     paintRibbon(st);
 
     // Patch only rows that changed. Rebuilding the whole list made every status
     // transition visibly flash and restarted all entrance animations.
-    const sig = st.phase + '|' + st.steps.map((s, i) => {
+    const rows = stepsForList(st.steps, st.phase, chooseLocal);
+    const sig = st.phase + '|' + rows.map((s, i) => {
       const on = st.phase === 'choose'
         ? (chooseLocal ? chooseLocal[i] : s.on !== false)
         : null;
@@ -3035,7 +3063,7 @@ WEB_HTML_HEAD
     if (sig !== lastSig) {
       lastSig = sig;
       const list = $('steps');
-      st.steps.forEach((s, i) => {
+      rows.forEach((s, i) => {
         const row = Object.assign({}, s);
         if (st.phase === 'choose') {
           row.on = chooseLocal ? !!chooseLocal[i] : s.on !== false;
@@ -3059,18 +3087,18 @@ WEB_HTML_HEAD
         }
         if (s.s === 'run') setStepTail(next, st.tail);
       });
-      while (list.children.length > st.steps.length) list.lastElementChild.remove();
+      while (list.children.length > rows.length) list.lastElementChild.remove();
       if (!list.classList.contains('ready') && !stepsReadyTimer) {
         stepsReadyTimer = setTimeout(() => list.classList.add('ready'), 450);
       }
     } else {
       // cheap path: only the running step's clock ticks
-      const run = st.steps.findIndex((s) => s.s === 'run');
+      const run = rows.findIndex((s) => s.s === 'run');
       if (run >= 0) {
         const el = $('steps').children[run];
         if (el) {
           const took = el.querySelector('.took');
-          if (took) took.textContent = fmt(st.elapsed - (st.steps[run].b ?? st.elapsed));
+          if (took) took.textContent = fmt(st.elapsed - (rows[run].b ?? st.elapsed));
           setStepTail(el, st.tail);
         }
       }
@@ -3081,7 +3109,7 @@ WEB_HTML_HEAD
       $('result').classList.add('on');
       // A red cross means "this run achieved nothing". One failed step among many
       // successful ones is a warning, not a failure of the whole run.
-      const failed = st.fail > 0, total_fail = failed && st.done === 0;
+      const failed = counts.fail > 0, total_fail = failed && counts.done === 0;
       $('verdict').hidden = !failed;
       $('verdict').classList.toggle('bad', total_fail);
       $('verdict').classList.toggle('warn', failed && !total_fail);
@@ -3090,7 +3118,7 @@ WEB_HTML_HEAD
           ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m8 8 8 8M16 8l-8 8"/></svg>`
           : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7.5v6M12 16.8v.2"/></svg>`;
         $('r-head').textContent = total_fail ? 'Nothing could be updated'
-          : `Done, ${st.fail} step${st.fail === 1 ? '' : 's'} needs attention`;
+          : `Done, ${counts.fail} step${counts.fail === 1 ? '' : 's'} needs attention`;
       }
 
       const ups = st.updates || [];
@@ -3105,9 +3133,9 @@ WEB_HTML_HEAD
           : `<span class="copy"><strong>${label}</strong><small>Click to see</small></span>${arrow}`;
       }
       $('ledger-facts').innerHTML = [
-        [st.done, 'completed'],
-        [st.skip, 'skipped'],
-        ...(st.fail ? [[st.fail, 'failed']] : []),
+        [counts.done, 'completed'],
+        [counts.skip, 'skipped'],
+        ...(counts.fail ? [[counts.fail, 'failed']] : []),
         [fmt(st.elapsed), 'elapsed'],
       ].map(([n, k]) => `<span><b>${n}</b>${k}</span>`).join('');
       $('ledger-title').textContent = failed
@@ -3121,12 +3149,12 @@ WEB_HTML_HEAD
           ${versionMarkup(u.o, u.w)}
         </li>`).join('');
       if (!ledgerShown) { ledgerShown = true; openLedger(); }
-      document.title = st.fail ? `updatetools — ${st.fail} failed` : 'updatetools — done';
+      document.title = counts.fail ? `updatetools — ${counts.fail} failed` : 'updatetools — done';
     } else if (st.phase === 'choose') {
       document.title = 'updatetools — choose steps';
     } else {
-      const finished = st.done + st.skip + st.fail;
-      const pct = st.total ? (100 * finished / st.total) : 0;
+      const finished = counts.done + counts.skip + counts.fail;
+      const pct = counts.total ? (100 * finished / counts.total) : 0;
       document.title = `updatetools — ${Math.round(pct)}%`;
     }
   }
@@ -3497,6 +3525,7 @@ WEB_HTML_HEAD
     el.setAttribute('aria-checked', on ? 'true' : 'false');
     syncChooseLocalFromDom();
     lastSig = '';
+    if (latestState) paintRibbon(latestState);
   }
   $('steps').addEventListener('click', (e) => {
     const el = e.target.closest('.step');
