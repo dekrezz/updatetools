@@ -69,7 +69,7 @@ brew install updatetools
 brew install --HEAD updatetools   # track main
 ```
 
-Homebrew 7 will not load a third-party formula until that tap is trusted.
+Homebrew 7 will not load a third-party formula until you trust it.
 `brew trust` is local and has to be run once per machine; the formula cannot
 skip it.
 
