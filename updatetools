@@ -22,6 +22,8 @@
 # Usage:
 #   updatetools                 # opens a live dashboard in your browser
 #   updatetools --plain         # plain scrolling text output, no browser
+#   updatetools --only a,b      # this run: only these step keys (see README)
+#   updatetools --skip a,b      # this run: skip these step keys
 #   updatetools --no-greedy     # don't force-upgrade casks that self-manage
 #   updatetools --no-close      # never close running apps (stage all cask upgrades)
 #   updatetools --no-manual-apps # skip safe updates for apps installed from DMGs
@@ -32,6 +34,7 @@
 #   GREEDY=0 PLAIN=1 CLOSE_APPS=0 QUIET_APPS=0 DEBUG=1
 #   UPDATETOOLS_CLOSE="a b"      # force-close these cask apps to upgrade them now
 #   UPDATETOOLS_PROTECT="a b"    # never close these cask apps
+#   UPDATETOOLS_ENABLED_FILE     # override ~/.config/updatetools/enabled
 set -u
 
 GREEDY="${GREEDY:-1}"
@@ -45,18 +48,29 @@ DEBUG="${DEBUG:-0}"
 # Watchdog: kill a step that emits no output for this many seconds. 0 disables.
 STALL_TIMEOUT="${STALL_TIMEOUT:-300}"
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-300}"
+# Comma/space lists of step keys for this run only (do not rewrite the saved set
+# unless the dashboard Start control confirms a selection).
+ONLY_STEPS=""
+SKIP_STEPS=""
 
-for arg in "$@"; do
-  case "$arg" in
+while [ $# -gt 0 ]; do
+  case "$1" in
     --plain)         PLAIN=1 ;;
     --web)           PLAIN=0 ;;
     --debug|--keep)  DEBUG=1 ;;
     --no-greedy)     GREEDY=0 ;;
     --no-close)      CLOSE_APPS=0 ;;
     --no-manual-apps) QUIET_APPS=0 ;;
+    --only)          shift; ONLY_STEPS="${1-}"
+                     [ -n "${1-}" ] || { echo "updatetools: --only needs a comma-separated key list" >&2; exit 2; } ;;
+    --only=*)        ONLY_STEPS="${1#--only=}" ;;
+    --skip)          shift; SKIP_STEPS="${1-}"
+                     [ -n "${1-}" ] || { echo "updatetools: --skip needs a comma-separated key list" >&2; exit 2; } ;;
+    --skip=*)        SKIP_STEPS="${1#--skip=}" ;;
     -h|--help)  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "Unknown option: $arg"; exit 2 ;;
+    *) echo "Unknown option: $1"; exit 2 ;;
   esac
+  shift
 done
 [ "$GREEDY" = "1" ] && GREEDY_FLAG="--greedy" || GREEDY_FLAG=""
 export CLOSE_APPS QUIET_APPS MAKE_REPORT OPEN_REPORT DEBUG
@@ -1218,6 +1232,164 @@ ut_icon_site() {
   esac
 }
 
+# ut_step_key LABEL — stable CLI/config key for a STEPS row. Prefers the same
+# slug the ribbon already uses; fills in short names where the icon map is empty.
+ut_step_key() {
+  local label="${1-}" name slug
+  name="${label%% · *}"
+  slug="$(ut_icon_slug "$name")"
+  if [ -n "$slug" ]; then
+    printf '%s\n' "$slug"
+    return 0
+  fi
+  name=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+  case "$name" in
+    *codex*)       echo codex ;;
+    *antigravity*|agy*) echo antigravity ;;
+    *vs\ code*|*vscode*|code) echo vscode ;;
+    *)
+      printf '%s' "$name" | sed -E 's/[^a-z0-9]+/-/g;s/^-+//;s/-+$//'
+      ;;
+  esac
+}
+
+# Path to the persisted enabled-step list (one key per line). Missing file = all on.
+ut_enabled_file() {
+  printf '%s\n' "${UPDATETOOLS_ENABLED_FILE:-$HOME/.config/updatetools/enabled}"
+}
+
+# Expand a comma/space list into newline-separated keys (no empties).
+ut_split_keys() {
+  printf '%s' "${1-}" | tr ', ' '\n\n' | sed '/^[[:space:]]*$/d'
+}
+
+# Return 0 if needle appears in a comma/space haystack.
+ut_key_in_list() {
+  local needle="$1" hay="$2" k
+  [ -n "$hay" ] || return 1
+  while IFS= read -r k; do
+    [ "$k" = "$needle" ] && return 0
+  done <<EOF
+$(ut_split_keys "$hay")
+EOF
+  return 1
+}
+
+# Load ~/.config/updatetools/enabled into STEP_ON[i] (1=run, 0=skip this run).
+# Missing file => every step on. Unreadable file => hard error (no silent fallback).
+# Then apply --only / --skip for this run only.
+ut_resolve_step_selection() {
+  local f i key line all=1
+  f="$(ut_enabled_file)"
+  for ((i=0;i<TOTAL;i++)); do STEP_ON[i]=1; done
+  if [ -e "$f" ]; then
+    if [ ! -r "$f" ]; then
+      echo "updatetools: cannot read enabled-steps file: $f" >&2
+      exit 1
+    fi
+    all=0
+    for ((i=0;i<TOTAL;i++)); do STEP_ON[i]=0; done
+    while IFS= read -r line || [ -n "${line:-}" ]; do
+      line="${line%%#*}"
+      line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+      [ -n "$line" ] || continue
+      for ((i=0;i<TOTAL;i++)); do
+        [ "${STEP_KEY[i]}" = "$line" ] && STEP_ON[i]=1
+      done
+    done < "$f"
+  fi
+  if [ -n "$ONLY_STEPS" ]; then
+    for ((i=0;i<TOTAL;i++)); do STEP_ON[i]=0; done
+    while IFS= read -r key; do
+      [ -n "$key" ] || continue
+      local found=0
+      for ((i=0;i<TOTAL;i++)); do
+        if [ "${STEP_KEY[i]}" = "$key" ]; then STEP_ON[i]=1; found=1; fi
+      done
+      if [ "$found" = 0 ]; then
+        echo "updatetools: unknown step key in --only: $key" >&2
+        echo "Known keys: $(ut_all_step_keys)" >&2
+        exit 2
+      fi
+    done <<EOF
+$(ut_split_keys "$ONLY_STEPS")
+EOF
+  fi
+  if [ -n "$SKIP_STEPS" ]; then
+    while IFS= read -r key; do
+      [ -n "$key" ] || continue
+      local found=0
+      for ((i=0;i<TOTAL;i++)); do
+        if [ "${STEP_KEY[i]}" = "$key" ]; then STEP_ON[i]=0; found=1; fi
+      done
+      if [ "$found" = 0 ]; then
+        echo "updatetools: unknown step key in --skip: $key" >&2
+        echo "Known keys: $(ut_all_step_keys)" >&2
+        exit 2
+      fi
+    done <<EOF
+$(ut_split_keys "$SKIP_STEPS")
+EOF
+  fi
+  # Silence an unused-when-file-missing note: all stays 1 only for the missing path.
+  : "$all"
+}
+
+ut_all_step_keys() {
+  local i out=""
+  for ((i=0;i<TOTAL;i++)); do
+    [ -n "$out" ] && out+=", "
+    out+="${STEP_KEY[i]}"
+  done
+  printf '%s\n' "$out"
+}
+
+# Persist currently enabled STEP_ON keys (called when the dashboard Start runs).
+ut_save_enabled() {
+  local f dir i
+  f="$(ut_enabled_file)"
+  dir=$(dirname "$f")
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    echo "updatetools: cannot create config directory: $dir" >&2
+    exit 1
+  fi
+  : > "$f.tmp.$$" || { echo "updatetools: cannot write $f" >&2; exit 1; }
+  for ((i=0;i<TOTAL;i++)); do
+    if [ "${STEP_ON[i]}" = "1" ]; then
+      printf '%s\n' "${STEP_KEY[i]}" >> "$f.tmp.$$" || {
+        rm -f "$f.tmp.$$"
+        echo "updatetools: cannot write $f" >&2
+        exit 1
+      }
+    fi
+  done
+  if ! mv -f "$f.tmp.$$" "$f"; then
+    rm -f "$f.tmp.$$"
+    echo "updatetools: cannot write enabled-steps file: $f" >&2
+    exit 1
+  fi
+}
+
+# Apply a newline-separated key list as the enabled set (from the Start POST).
+ut_apply_enabled_keys() {
+  local list="${1-}" i key found
+  for ((i=0;i<TOTAL;i++)); do STEP_ON[i]=0; done
+  while IFS= read -r key || [ -n "${key:-}" ]; do
+    key=$(printf '%s' "$key" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -n "$key" ] || continue
+    found=0
+    for ((i=0;i<TOTAL;i++)); do
+      if [ "${STEP_KEY[i]}" = "$key" ]; then STEP_ON[i]=1; found=1; fi
+    done
+    if [ "$found" = 0 ]; then
+      echo "updatetools: unknown step key from dashboard: $key" >&2
+      exit 1
+    fi
+  done <<EOF
+$list
+EOF
+}
+
 # ut_icon_slug NAME — map a tool name to a Simple Icons slug (empty if unknown,
 # in which case the report falls back to a monogram).
 ut_icon_slug() {
@@ -1986,6 +2158,40 @@ try {
   .label .n{font-weight:500; letter-spacing:-.01em}
   .label .a{display:block; color:var(--text-3); margin-top:.05rem; font-size:.8125rem}
   .step.skip .label .n,.step.skip .label .a{color:var(--text-3); font-weight:400}
+  .step.off .label .n,.step.off .label .a{color:var(--text-3); font-weight:400}
+  .step.choose{cursor:pointer}
+  .step.choose.off{opacity:.55}
+  .step.choose .step-state{color:var(--text-2)}
+  .toggle{
+    width:2.35rem; height:1.35rem; border-radius:999px; flex:none;
+    background:var(--plate-2); border:1px solid var(--hairline-strong);
+    position:relative; transition:background-color .18s ease,border-color .18s ease;
+  }
+  .toggle i{
+    position:absolute; top:1px; left:1px; width:1.05rem; height:1.05rem;
+    border-radius:50%; background:var(--bg-tint); box-shadow:0 1px 2px rgba(0,0,0,.18);
+    transition:transform .18s ease;
+  }
+  .step.choose.on .toggle{background:var(--text); border-color:var(--text)}
+  .step.choose.on .toggle i{transform:translateX(1rem); background:var(--bg)}
+  .chooser-bar{
+    display:none; margin:1.25rem 0 0; padding:0 .4rem;
+  }
+  .chooser-bar.on{display:block}
+  .chooser-bar .start{
+    appearance:none; cursor:pointer; width:100%;
+    display:flex; align-items:center; justify-content:center; gap:.65rem;
+    background:var(--text); color:var(--bg);
+    border:0; border-radius:16px; padding:1rem 1.2rem;
+    font:600 1rem/1.1 var(--sans); letter-spacing:-.02em;
+  }
+  .chooser-bar .start:hover{filter:brightness(1.06)}
+  .chooser-bar .start:active{transform:scale(.995)}
+  .chooser-bar .start:focus-visible{outline:2px solid var(--text); outline-offset:3px}
+  .chooser-bar .start svg{width:1.15rem; height:1.15rem; display:block}
+  .chooser-bar .hint{
+    margin:.7rem 0 0; text-align:center; color:var(--text-3); font-size:.8125rem;
+  }
   .step-state{
     display:inline-flex; align-items:center; gap:.4rem; justify-self:end;
     color:var(--text-3); font-size:.8125rem; font-variant-numeric:tabular-nums;
@@ -2336,6 +2542,13 @@ try {
     </header>
 
     <section class="steps" id="steps"></section>
+    <div class="chooser-bar" id="chooser-bar">
+      <button type="button" class="start" id="start-run">
+        Start update
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+      </button>
+      <p class="hint">Your choices are saved for the next run. Closing this tab cancels.</p>
+    </div>
 
     <section class="result" id="result">
       <div class="rule"></div>
@@ -2463,13 +2676,24 @@ WEB_HTML_HEAD
   function stepState(s, elapsed) {
     if (s.s === 'done') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4 4 10-10"/></svg>${dur(s.t)}</span>`;
     if (s.s === 'fail') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>${dur(s.t)}</span>`;
+    if (s.s === 'skip' && s.why === 'off') return `<span class="step-state">off</span>`;
     if (s.s === 'skip') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 12h10"/></svg>${dur(s.t)}</span>`;
     if (s.s === 'run') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"/></svg><span class="took">${fmt(elapsed)}</span></span>`;
+    if (latestPhase === 'choose') return `<span class="step-state"><span class="toggle" aria-hidden="true"><i></i></span></span>`;
     return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg></span>`;
   }
 
   function stepMarkup(s, st) {
-    return `<div class="step ${s.s}" data-label="${s.a ? `${s.n} · ${s.a}` : s.n}" role="button" tabindex="0">
+    if (st.phase === 'choose') {
+      const on = s.on !== false;
+      return `<div class="step choose ${on ? 'on' : 'off'}" data-key="${escapeHtml(s.key || s.slug || '')}" data-label="${s.a ? `${s.n} · ${s.a}` : s.n}" role="switch" aria-checked="${on}" tabindex="0">
+          ${logo(s.slug, s.img, s.n)}
+          <span class="label"><span class="n">${s.n}</span>${s.a ? `<span class="a">${s.a}</span>` : ''}</span>
+          ${stepState(s, 0)}
+        </div>`;
+    }
+    const klass = s.s === 'skip' && s.why === 'off' ? 'skip off' : s.s;
+    return `<div class="step ${klass}" data-label="${s.a ? `${s.n} · ${s.a}` : s.n}" role="button" tabindex="0">
           ${logo(s.slug, s.img, s.n)}
           <span class="label"><span class="n">${s.n}</span>${s.a ? `<span class="a">${s.a}</span>` : ''}</span>
           ${stepState(s, st.elapsed - (s.b ?? st.elapsed))}
@@ -2520,32 +2744,51 @@ WEB_HTML_HEAD
 
   let lastSig = '', stepsReadyTimer = 0;
   let latestUpdates = [], latestPhase = 'run';
+  let chooseLocal = null; // null = follow server; array of bools once the user toggles
+  let startSent = false;
   function render(st) {
     latestUpdates = st.updates || [];
     latestPhase = st.phase;
     // header
-    $('phase').textContent =
-      st.phase === 'done'
-        ? [`${st.done} steps completed`, st.skip ? `${st.skip} skipped` : '', st.fail ? `${st.fail} failed` : ''].filter(Boolean).join(' · ')
-                          : `${st.done + st.skip + st.fail} of ${st.total} steps`;
-    $('clock').textContent = fmt(st.elapsed || 0);
+    if (st.phase === 'choose') {
+      $('phase').textContent = 'choose steps';
+      $('clock').textContent = '00:00';
+      $('chooser-bar').classList.add('on');
+    } else {
+      $('chooser-bar').classList.remove('on');
+      $('phase').textContent =
+        st.phase === 'done'
+          ? [`${st.done} steps completed`, st.skip ? `${st.skip} skipped` : '', st.fail ? `${st.fail} failed` : ''].filter(Boolean).join(' · ')
+                            : `${st.done + st.skip + st.fail} of ${st.total} steps`;
+      $('clock').textContent = fmt(st.elapsed || 0);
+    }
     paintRibbon(st);
 
     // Patch only rows that changed. Rebuilding the whole list made every status
     // transition visibly flash and restarted all entrance animations.
-    const sig = st.steps.map((s) => s.s + (s.t ?? '')).join('|');
+    const sig = st.phase + '|' + st.steps.map((s, i) => {
+      const on = st.phase === 'choose'
+        ? (chooseLocal ? chooseLocal[i] : s.on !== false)
+        : null;
+      return s.s + (s.t ?? '') + (s.why || '') + (on === null ? '' : (on ? '1' : '0'));
+    }).join('|');
     if (sig !== lastSig) {
       lastSig = sig;
       const list = $('steps');
       st.steps.forEach((s, i) => {
-        const key = `${s.s}|${s.t ?? ''}`;
+        const row = Object.assign({}, s);
+        if (st.phase === 'choose') {
+          row.on = chooseLocal ? !!chooseLocal[i] : s.on !== false;
+          row.s = 'pending';
+        }
+        const key = `${st.phase}|${row.s}|${row.t ?? ''}|${row.why || ''}|${row.on === false ? 0 : 1}`;
         const old = list.children[i];
         if (old && old.dataset.render === key) {
           if (s.s === 'run') setStepTail(old, st.tail);
           return;
         }
         const box = document.createElement('div');
-        box.innerHTML = stepMarkup(s, st);
+        box.innerHTML = stepMarkup(row, st);
         const next = box.firstElementChild;
         next.dataset.render = key;
         if (old) {
@@ -2619,7 +2862,11 @@ WEB_HTML_HEAD
         </li>`).join('');
       if (!ledgerShown) { ledgerShown = true; openLedger(); }
       document.title = st.fail ? `updatetools — ${st.fail} failed` : 'updatetools — done';
+    } else if (st.phase === 'choose') {
+      document.title = 'updatetools — choose steps';
     } else {
+      const finished = st.done + st.skip + st.fail;
+      const pct = st.total ? (100 * finished / st.total) : 0;
       document.title = `updatetools — ${Math.round(pct)}%`;
     }
   }
@@ -2939,6 +3186,7 @@ WEB_HTML_HEAD
   infoBtn.addEventListener('blur', () => tipOn(false));
 
   $('steps').addEventListener('pointerover', (e) => {
+    if (latestPhase === 'choose') return;
     const el = e.target.closest('.step');
     if (!hoverLogs || !el || el.contains(e.relatedTarget)) return;
     clearTimeout(hoverOpenTimer);
@@ -2950,6 +3198,7 @@ WEB_HTML_HEAD
     }, 160);
   });
   $('steps').addEventListener('pointerout', (e) => {
+    if (latestPhase === 'choose') return;
     const el = e.target.closest('.step');
     if (!hoverLogs || !el || el.contains(e.relatedTarget)) return;
     if (hoverEl === el) {
@@ -2967,23 +3216,66 @@ WEB_HTML_HEAD
     box.scrollTop = Math.min(max, Math.max(0, box.scrollTop + e.deltaY));
   }, { passive: false });
   $('steps').addEventListener('focusin', (e) => {
+    if (latestPhase === 'choose') return;
     const el = e.target.closest('.step');
     if (el) showStepLog(el, el.dataset.label);
   });
   $('steps').addEventListener('focusout', (e) => {
+    if (latestPhase === 'choose') return;
     const el = e.target.closest('.step');
     if (!el || el.contains(e.relatedTarget)) return;
     hideStepLog(el);
   });
+  function syncChooseLocalFromDom() {
+    chooseLocal = Array.from($('steps').children).map((el) => el.classList.contains('on'));
+  }
+  function toggleChooseStep(el) {
+    if (!el || !el.classList.contains('choose')) return;
+    const on = !el.classList.contains('on');
+    el.classList.toggle('on', on);
+    el.classList.toggle('off', !on);
+    el.setAttribute('aria-checked', on ? 'true' : 'false');
+    syncChooseLocalFromDom();
+    lastSig = '';
+  }
   $('steps').addEventListener('click', (e) => {
-    if (hoverLogs) return;
     const el = e.target.closest('.step');
-    if (el) toggleStepLog(el, el.dataset.label);
+    if (!el) return;
+    if (latestPhase === 'choose') {
+      e.preventDefault();
+      toggleChooseStep(el);
+      return;
+    }
+    if (hoverLogs) return;
+    toggleStepLog(el, el.dataset.label);
   });
   $('steps').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     const el = e.target.closest('.step');
-    if (el) { e.preventDefault(); toggleStepLog(el, el.dataset.label); }
+    if (!el) return;
+    e.preventDefault();
+    if (latestPhase === 'choose') { toggleChooseStep(el); return; }
+    toggleStepLog(el, el.dataset.label);
+  });
+  $('start-run').addEventListener('click', async () => {
+    if (startSent || latestPhase !== 'choose') return;
+    startSent = true;
+    $('start-run').disabled = true;
+    if (!chooseLocal) syncChooseLocalFromDom();
+    const enabled = Array.from($('steps').children)
+      .filter((el) => el.classList.contains('on'))
+      .map((el) => el.dataset.key)
+      .filter(Boolean);
+    try {
+      await fetch('start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+    } catch {
+      startSent = false;
+      $('start-run').disabled = false;
+    }
   });
 
   let misses = 0;
@@ -3027,21 +3319,24 @@ WEB_HTML_TAIL
 # Globals it reads: STEPS/STATUS/STEP_T0/STEP_SEC/TOTAL/T0/LOG/UT_WEB_UPDATES.
 ut_web_state() {
   [ -n "$WEB_DIR" ] || return 0
-  local phase="${1:-run}" i done_n=0 skip_n=0 fail_n=0 steps="" tail_line="" label name action slug
+  local phase="${1:-run}" i done_n=0 skip_n=0 fail_n=0 steps="" tail_line="" label name action slug key
   for ((i=0;i<TOTAL;i++)); do
     case "${STATUS[i]}" in done) done_n=$((done_n+1));; skip) skip_n=$((skip_n+1));; fail) fail_n=$((fail_n+1));; esac
     label="${STEPS[i]%%¦*}"; name="$label"; action=""
     if [[ "$label" == *" · "* ]]; then name="${label%% · *}"; action="${label#* · }"; fi
     slug="${STEP_SLUG[i]:-}"
+    key="${STEP_KEY[i]:-$slug}"
     [ -n "$steps" ] && steps+=","
     steps+="{\"n\":\"$(ut_json_escape "$name")\",\"a\":\"$(ut_json_escape "$action")\",\"s\":\"${STATUS[i]}\""
-    steps+=",\"slug\":\"$slug\""
+    steps+=",\"slug\":\"$slug\",\"key\":\"$(ut_json_escape "$key")\""
+    if [ "${STEP_ON[i]:-1}" = "1" ]; then steps+=",\"on\":true"; else steps+=",\"on\":false"; fi
+    [ -n "${STEP_WHY[i]:-}" ] && steps+=",\"why\":\"$(ut_json_escape "${STEP_WHY[i]}")\""
     [ -n "${STEP_IMG[i]:-}" ] && steps+=",\"img\":\"${STEP_IMG[i]}\""
     [ -n "${STEP_SEC[i]:-}" ] && steps+=",\"t\":${STEP_SEC[i]}"
     [ -n "${STEP_T0[i]:-}" ]  && steps+=",\"b\":$(( ${STEP_T0[i]} - T0 ))"
     steps+="}"
   done
-  if [ "$phase" != "done" ]; then
+  if [ "$phase" != "done" ] && [ "$phase" != "choose" ]; then
     tail_line=$(
       tail -n 40 "$LOG" 2>/dev/null | tr -d '\r' \
         | LC_ALL=C sed $'s/\033\\[[0-9;?]*[a-zA-Z]//g' \
@@ -3131,7 +3426,7 @@ ut_web_start() {
   have python3 || return 1
   WEB_DIR=$(mktemp -d "${TMPDIR:-/tmp}/updatetools-web.XXXXXX") || return 1
   ut_web_page > "$WEB_DIR/index.html" || return 1
-  ut_web_state "run"
+  ut_web_state "choose"
 
   # http.server with a no-store header, so a poll never reads a cached snapshot.
   cat > "$WEB_DIR/serve.py" <<'SERVE_EOF'
@@ -3213,6 +3508,24 @@ class H(http.server.SimpleHTTPRequestHandler):
             fd = os.open(reply_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, 'w') as f:
                 f.write(pw + '\n')
+            self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers()
+            return
+        if path == '/start':
+            # One key per line for the bash side; empty body means "run none".
+            keys = []
+            try:
+                payload = json.loads(body.decode('utf-8') or '{}')
+                raw = payload.get('enabled')
+                if isinstance(raw, list):
+                    keys = [str(x).strip() for x in raw if str(x).strip()]
+            except Exception:
+                keys = []
+            start_path = os.path.join(root, 'start')
+            fd = os.open(start_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                f.write('\n'.join(keys))
+                if keys:
+                    f.write('\n')
             self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers()
             return
         if path == '/quit':
@@ -3376,18 +3689,35 @@ STEPS=(
 
 TOTAL=${#STEPS[@]}
 STATUS=()                       # done|skip|fail|run|pending per step
-for ((i=0;i<TOTAL;i++)); do STATUS[i]="pending"; done
+STEP_KEY=()                     # stable slug per step (CLI / enabled file)
+STEP_ON=()                      # 1 = run this step, 0 = user-disabled
+STEP_WHY=()                     # off|guard when STATUS=skip
+for ((i=0;i<TOTAL;i++)); do
+  STATUS[i]="pending"
+  STEP_KEY[i]="$(ut_step_key "${STEPS[i]%%¦*}")"
+  STEP_ON[i]=1
+  STEP_WHY[i]=""
+done
 # ===========================================================================
 # Runtime
 # ===========================================================================
 T0=$SECONDS
 LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
-STATUS=(); STEP_T0=(); STEP_SEC=(); STEP_SLUG=(); STEP_IMG=()
+STATUS=(); STEP_T0=(); STEP_SEC=(); STEP_SLUG=(); STEP_IMG=(); STEP_WHY=()
 CUR_STEP=0; CUR_PID=""
 SUDO_KEEPER=""; WRAP_DIR=""; PROMPT_REQ=""; PROMPT_REP=""; LOCKDIR=""
 UT_WEB_REPORT=""; UT_WEB_UPDATES=""; SUDO_PW=""; UT_PROMPT=""
 UT_WEB_DATA="${TMPDIR:-/tmp}/updatetools-updates-$$.txt"
 export UT_WEB_DATA
+
+# Re-seed keys after the runtime STATUS wipe (STEP_KEY itself is kept).
+for ((i=0;i<TOTAL;i++)); do
+  STATUS[i]="pending"
+  STEP_WHY[i]=""
+  [ -n "${STEP_KEY[i]:-}" ] || STEP_KEY[i]="$(ut_step_key "${STEPS[i]%%¦*}")"
+  STEP_ON[i]=1
+done
+ut_resolve_step_selection
 
 fmt_time() { printf '%02d:%02d' $(( $1/60 )) $(( $1%60 )); }
 
@@ -3437,11 +3767,12 @@ run_web() {
   T0=$SECONDS
   LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
   : > "$LOG"
-  STATUS=(); STEP_T0=(); STEP_SEC=(); STEP_SLUG=(); STEP_IMG=()
+  STATUS=(); STEP_T0=(); STEP_SEC=(); STEP_SLUG=(); STEP_IMG=(); STEP_WHY=()
   local i label name
   local site
   for ((i=0;i<TOTAL;i++)); do
     STATUS[i]="pending"
+    STEP_WHY[i]=""
     label="${STEPS[i]%%¦*}"; name="${label%% · *}"
     STEP_SLUG[i]="$(ut_icon_slug "$name")"
     STEP_IMG[i]=""
@@ -3507,8 +3838,22 @@ export GIT_TERMINAL_PROMPT=0
   [ "${WEB_OPENED:-0}" = "1" ] || printf 'updatetools dashboard: %s\n' "$WEB_URL"
   [ "${DEBUG:-0}" = "1" ] && printf 'log: %s\n' "$LOG"
 
+  # Wait for the user to confirm which steps to run. Closing the tab still ends
+  # the server (existing idle/quit behaviour), which aborts this wait.
+  rm -f "$WEB_DIR/start"
+  ut_web_state choose
+  while [ ! -f "$WEB_DIR/start" ]; do
+    sleep 0.2
+    if ! kill -0 "$WEB_PID" 2>/dev/null; then
+      echo "updatetools: dashboard closed before start — nothing run." >&2
+      return 1
+    fi
+  done
+  ut_apply_enabled_keys "$(cat "$WEB_DIR/start")"
+  ut_save_enabled
+  rm -f "$WEB_DIR/start"
 
-
+  T0=$SECONDS
   sudo_prime || true
   ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
   SUDO_KEEPER=$!
@@ -3524,11 +3869,16 @@ export GIT_TERMINAL_PROMPT=0
     guard="${entry#*¦}"; guard="${guard%%¦*}"
     cmd="${entry##*¦}"
 
+    if [ "${STEP_ON[i]}" != "1" ]; then
+      STATUS[i]="skip"; STEP_WHY[i]="off"; ut_web_state run; continue
+    fi
+
     if ! eval "$guard" >/dev/null 2>&1; then
-      STATUS[i]="skip"; ut_web_state run; continue
+      STATUS[i]="skip"; STEP_WHY[i]="guard"; ut_web_state run; continue
     fi
 
     STATUS[i]="run"
+    STEP_WHY[i]=""
     STEP_T0[i]=$SECONDS
     ut_web_state run
     rm -f "$PROMPT_REQ" "$PROMPT_REP"
@@ -3609,260 +3959,81 @@ export GIT_TERMINAL_PROMPT=0
 }
 
 run_plain() {
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-section() { printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
-have()    { command -v "$1" >/dev/null 2>&1; }
-note()    { printf '   %s\n' "$*"; }
+  # Plain mode uses the same STEPS table as the dashboard: saved enabled keys
+  # plus --only/--skip, then runs immediately (no browser wait).
+  local i entry guard cmd label rc done_n=0 skip_n=0 fail_n=0
+  section() { printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
+  note()    { printf '   %s\n' "$*"; }
 
-# ---------------------------------------------------------------------------
-# Homebrew PATH
-# ---------------------------------------------------------------------------
-section "Ensure Homebrew PATH"
-if [ -x /opt/homebrew/bin/brew ]; then
-  eval "$(/opt/homebrew/bin/brew shellenv)"
-elif [ -x /usr/local/bin/brew ]; then
-  eval "$(/usr/local/bin/brew shellenv)"
-fi
-have brew && note "brew: $(command -v brew)" || note "brew not found"
+  T0=$SECONDS
+  LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
+  : > "$LOG"
+  for ((i=0;i<TOTAL;i++)); do
+    STATUS[i]="pending"
+    STEP_WHY[i]=""
+  done
 
-section "Current tools"
-which -a brew node npm npx pnpm uv cargo go gem python3 \
-  supabase vercel gh code docker 2>/dev/null || true
+  section "updatetools (plain)"
+  note "steps: $(ut_all_step_keys)"
+  note "enabled file: $(ut_enabled_file)"
 
-# ---------------------------------------------------------------------------
-# Homebrew
-# ---------------------------------------------------------------------------
-if have brew; then
-  section "Homebrew update"
-  brew update || true
-
-  # Snapshot "before" versions now — after the index refresh, before any upgrade —
-  # so the Desktop report can show accurate old -> new transitions.
-  ut_report_begin
-
-  section "Homebrew outdated (report)"
-  brew outdated || true
-  brew outdated --cask --greedy || true
-
-  section "Homebrew upgrade formulae"
-  # Keep this step formulae-only: brew upgrade otherwise also touches casks with
-  # auto_updates true, which can include ones needing an interactive sudo prompt.
-  HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1 brew upgrade || true
-
-  section "Homebrew upgrade casks"
-  # Per outdated cask, classify_cask() above decides whether the
-  # running app is safe to close: apps that aren't running are upgraded in place;
-  # the terminal running this script, apps with unsaved work, and risky categories
-  # (browsers, IDEs, VMs, meetings, password managers, backups) are staged with
-  # --no-quit; only provably-clean apps (or ones in UPDATETOOLS_CLOSE) are quit
-  # gracefully, upgraded and relaunched. Nothing is ever force-killed.
-  ut_upgrade_casks_smart "$GREEDY_FLAG"
-
-  section "Homebrew postinstall fixes"
-  if brew list gnupg >/dev/null 2>&1; then
-    brew postinstall gnupg </dev/null || true
+  # Soft sudo refresh on a TTY; never block forever when stdin is not a terminal.
+  if [ -t 0 ]; then
+    sudo -v 2>/dev/null || true
+  else
+    sudo -n true 2>/dev/null || true
   fi
 
-  section "Homebrew cleanup"
-  brew autoremove || true
-  brew cleanup -s || true
-else
-  section "Homebrew"
-  note "Homebrew not found; skipping."
-fi
+  have brew || ut_report_begin
 
-# Fallback "before" snapshot: if Homebrew is absent the block above was skipped,
-# so capture CLI versions here instead (idempotent — a no-op if already taken).
-ut_report_begin
+  for ((i=0;i<TOTAL;i++)); do
+    CUR_STEP=$i
+    entry="${STEPS[i]}"
+    label="${entry%%¦*}"
+    guard="${entry#*¦}"; guard="${guard%%¦*}"
+    cmd="${entry##*¦}"
+    section "$label"
 
-# ---------------------------------------------------------------------------
-# Manually installed drag-and-drop apps
-# ---------------------------------------------------------------------------
-if [ "$QUIET_APPS" = "1" ] && have brew; then
-  section "Applications installed from DMGs"
-  ut_update_manual_apps
-fi
+    if [ "${STEP_ON[i]}" != "1" ]; then
+      STATUS[i]="skip"; STEP_WHY[i]="off"
+      note "skipped (turned off)"
+      continue
+    fi
+    if ! eval "$guard" >/dev/null 2>&1; then
+      STATUS[i]="skip"; STEP_WHY[i]="guard"
+      note "skipped (tool not installed / guard failed)"
+      continue
+    fi
 
-# ---------------------------------------------------------------------------
-# Node / npm / npx
-# ---------------------------------------------------------------------------
-section "Node / npm / npx"
-if have node; then note "node: $(node -v 2>/dev/null)"; else note "node not found."; fi
-if have npm; then
-  note "npm: $(npm -v 2>/dev/null)"
-  echo; note "npm global outdated:"
-  npm outdated -g --depth=0 || true
-  echo; note "npm global update:"
-  # npm itself is brew-managed; exclude it to avoid EACCES on /opt/homebrew/lib/node_modules/npm.
-  pkgs=$(npm outdated -g --depth=0 --parseable 2>/dev/null \
-    | cut -d: -f4 | sed 's/@[^@]*$//' | grep -v '^npm$' | tr '\n' ' ')
-  [ -n "$pkgs" ] && npm install -g $pkgs || true
-  npm cache verify || true
-  note "npx: $(npx -v 2>/dev/null || echo 'n/a')"
-  note "(npm itself is updated via its installer — brew here — not self-update.)"
-else
-  note "npm not found; skipping."
-fi
+    STATUS[i]="run"
+    STEP_T0[i]=$SECONDS
+    {
+      echo; echo "######## ${label} ########"
+      eval "$cmd"
+    } 2>&1 | tee -a "$LOG"
+    rc=${PIPESTATUS[0]}
+    STEP_SEC[i]=$(( SECONDS - ${STEP_T0[i]:-$SECONDS} ))
+    if [ "$rc" -ne 0 ]; then
+      STATUS[i]="fail"
+      note "failed (exit $rc)"
+    else
+      STATUS[i]="done"
+      note "done ($(fmt_time "${STEP_SEC[i]}"))"
+    fi
+  done
 
-# ---------------------------------------------------------------------------
-# pnpm
-# ---------------------------------------------------------------------------
-section "pnpm"
-if have pnpm; then
-  note "pnpm: $(pnpm -v 2>/dev/null)"
-  pnpm self-update 2>/dev/null || brew upgrade pnpm 2>/dev/null || true
-  # Ensure pnpm's global bin dir is in PATH (may be absent in non-interactive shells).
-  pnpm_bin="$(pnpm config get global-bin-dir 2>/dev/null)"
-  [ -n "$pnpm_bin" ] && export PATH="$PATH:$pnpm_bin"
-  pnpm update -g --latest || true
-else note "pnpm not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# Python tooling
-# ---------------------------------------------------------------------------
-section "Python base"
-if have python3; then
-  python3 --version || true
-  python3 -m pip --version 2>/dev/null || true
-  note "Skipping global pip/setuptools/wheel upgrade (Homebrew Python is externally managed)."
-else note "python3 not found; skipping."; fi
-
-section "uv + uv tools"
-if have uv; then
-  uv self update 2>/dev/null || brew upgrade uv 2>/dev/null || true
-  uv tool upgrade --all 2>/dev/null || true
-else note "uv not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# Rust
-# ---------------------------------------------------------------------------
-section "Cargo packages"
-if have cargo; then
-  have cargo-install-update || cargo install cargo-update || true
-  cargo install-update -a || true
-else note "cargo not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# Go
-# ---------------------------------------------------------------------------
-section "Go"
-if have go; then
-  go version || true
-  note "Go itself updated via brew. 'go install ...@latest' binaries need explicit module paths to re-install."
-else note "go not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# Ruby gems
-# ---------------------------------------------------------------------------
-section "Ruby gems"
-if have gem; then
-  gem_path="$(command -v gem)"
-  case "$gem_path" in
-    /usr/bin/gem|/System/*)
-      note "System Ruby ($gem_path) is SIP-protected; skipping system gem update."
-      note "Use a brew/rbenv Ruby if you want to manage gems." ;;
-    *)
-      gem update --system 2>/dev/null || true
-      gem update 2>/dev/null || true
-      gem cleanup 2>/dev/null || true ;;
-  esac
-else note "gem not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# Specific CLIs (install-source aware)
-# ---------------------------------------------------------------------------
-section "Supabase CLI"
-if have supabase; then
-  if have brew && brew list supabase >/dev/null 2>&1; then
-    brew upgrade supabase || true
-  elif have npm && npm list -g supabase >/dev/null 2>&1; then
-    npm update -g supabase || npm install -g supabase@latest || true
-  else note "supabase install source unclear; skipping."; fi
-else note "supabase not found; skipping."; fi
-
-section "Vercel CLI"
-if have vercel; then
-  if have brew && brew list vercel-cli >/dev/null 2>&1; then
-    brew upgrade vercel-cli || true
-  elif have npm && npm list -g vercel >/dev/null 2>&1; then
-    npm update -g vercel || npm install -g vercel@latest || true
-  else note "vercel install source unclear; skipping."; fi
-else note "vercel not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# Claude Code
-# ---------------------------------------------------------------------------
-section "Claude Code"
-if have claude; then
-  note "claude: $(claude --version 2>/dev/null)"
-  claude update || true
-else note "claude not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# Codex CLI (npm only - see codex_update_npm_only above for why)
-# ---------------------------------------------------------------------------
-section "Codex CLI"
-if have codex; then
-  note "codex: $(codex --version 2>/dev/null)"
-  codex_update_npm_only || true
-else note "codex not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# Antigravity CLI (agy) — self-updating, independent of the antigravity app cask
-# ---------------------------------------------------------------------------
-section "Antigravity CLI (agy)"
-if have agy; then
-  note "agy: $(agy --version 2>/dev/null)"
-  agy update || true
-else note "agy not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# gh CLI + extensions
-# ---------------------------------------------------------------------------
-section "GitHub CLI extensions"
-if have gh; then
-  gh extension upgrade --all 2>/dev/null || true
-else note "gh not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# VS Code extensions
-# ---------------------------------------------------------------------------
-section "VS Code extensions"
-if have code; then
-  vscode_update_exts
-else note "code command not found; skipping."; fi
-
-# ---------------------------------------------------------------------------
-# Final versions
-# ---------------------------------------------------------------------------
-section "Final versions"
-for v in "brew --version" "node -v" "npm -v" "npx -v" "pnpm -v" "python3 --version" \
-         "uv --version" "go version" "cargo --version" "claude --version" "codex --version" \
-         "agy --version" "gh --version" "docker --version"; do
-  out=$(eval "$v" 2>/dev/null | head -1)
-  [ -n "$out" ] && printf "%-10s %s\n" "${v%% *}:" "$out"
-done
-
-section "Homebrew doctor"
-have brew && brew doctor || true
-
-# ---------------------------------------------------------------------------
-# Update report — old -> new versions + changelog links, written to the Desktop.
-# ---------------------------------------------------------------------------
-section "Update report"
-report_path="$(ut_generate_report)"
-if [ -n "${report_path:-}" ]; then
-  note "HTML report: $report_path"
-  if [ -f "$report_path" ] && [ -t 1 ] && [ "$OPEN_REPORT" = "1" ]; then
-    open "$report_path" 2>/dev/null || true
-  fi
-fi
-
-section "Done"
-
+  section "Done"
+  done_n=0; skip_n=0; fail_n=0
+  for ((i=0;i<TOTAL;i++)); do
+    case "${STATUS[i]}" in
+      done) done_n=$((done_n+1)) ;;
+      skip) skip_n=$((skip_n+1)) ;;
+      fail) fail_n=$((fail_n+1)) ;;
+    esac
+  done
+  note "$done_n done · $skip_n skipped · $fail_n failed · $(fmt_time $((SECONDS-T0))) elapsed"
 }
+
 
 if [ "${UPDATETOOLS_LIB_ONLY:-0}" = "1" ]; then
   return 0 2>/dev/null || exit 0

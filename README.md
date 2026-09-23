@@ -77,6 +77,8 @@ install -m 755 updatetools ~/.local/bin/
 ```bash
 updatetools                 # live dashboard in your browser (default)
 updatetools --plain         # plain scrolling text output, no browser
+updatetools --only homebrew,npm   # this run: only these steps
+updatetools --skip rust,astral    # this run: skip cargo + uv steps
 updatetools --macos         # ALSO install macOS + App Store updates (may reboot!)
 updatetools --plain --macos
 updatetools --no-greedy     # don't force-upgrade self-managing casks
@@ -94,11 +96,30 @@ without any flag.
 |------|--------|
 | `--plain` | Force plain scrolling output instead of the dashboard. |
 | `--web` | Force the dashboard (default; useful only to override `PLAIN=1`). |
+| `--only a,b` | This run only: enable these step keys (comma/space list). Does not rewrite the saved set unless you confirm Start in the dashboard. |
+| `--skip a,b` | This run only: disable these step keys. |
 | `--debug`, `--keep` | Keep the run log and write the HTML report to the Desktop. |
 | `--macos`, `--all` | Install macOS **and** Mac App Store updates. Off by default. |
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
 | `--no-close` | Never close running apps — stage every cask upgrade with `--no-quit`. |
 | `--no-manual-apps` | Skip discovery and safe staging of manually installed DMG apps. |
+
+### Which steps run
+
+The dashboard lists every step with a toggle and waits for **Start update** before
+any step command runs. Closing the tab still cancels the run. Your enabled set is
+saved to `~/.config/updatetools/enabled` (one key per line) when you press Start.
+A missing file means all steps are on; an unreadable file is a hard error.
+
+Plain mode (`--plain` / non-TTY) does not wait for the browser: it applies the
+saved file plus `--only` / `--skip` and runs immediately. A step you turned off
+is reported as skipped (turned off), distinct from a missing tool (guard failed).
+
+Step keys (stable slugs, same as the ribbon where possible):
+
+`homebrew`, `applications`, `npm`, `pnpm`, `astral` (uv), `rust` (cargo),
+`supabase`, `vercel`, `claude`, `codex`, `antigravity`, `github` (gh), `vscode`,
+`report`.
 
 ### Environment toggles
 
@@ -110,6 +131,7 @@ without any flag.
 | `CLOSE_APPS=0` | `--no-close` |
 | `QUIET_APPS=0` | `--no-manual-apps` |
 | `DEBUG=1` | `--debug` |
+| `UPDATETOOLS_ENABLED_FILE` | Override path for the saved enabled-step list. |
 | `UPDATETOOLS_CLOSE="a b"` | Force-close these cask apps to upgrade them now (space/comma list of tokens). |
 | `UPDATETOOLS_PROTECT="a b"` | Never close these cask apps. |
 | `BREW_CASK_SKIP="a b"` | Casks needing an interactive sudo password — kept out of the run and reported for manual upgrade (default `stats aldente`). |
@@ -184,10 +206,11 @@ them.
 ## The dashboard
 
 The run has no terminal UI. It serves a page on `127.0.0.1` (random port), opens
-it in your default browser, and prints nothing. The page shows the plan before
-the run, live progress with per-step durations, and the version diff at the end;
-hovering a step opens that step's output. Passwords are asked for **in the page**
-— nothing is echoed as you type — and the answer goes straight to `sudo`.
+it in your default browser, and prints nothing. The page shows every step with a
+toggle before the run, waits for you to press Start, then shows live progress with
+per-step durations and the version diff at the end; hovering a step opens that
+step's output. Passwords are asked for **in the page** — nothing is echoed as
+you type — and the answer goes straight to `sudo`.
 
 Access is locked down: loopback only, a random per-run token exchanged for an
 `HttpOnly` cookie (everything else is `403`), a `Host` check against DNS
