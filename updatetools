@@ -307,8 +307,6 @@ fi
 #   3. quiet updates for manually installed DMG apps
 #   4. version report to Desktop — ut_report_begin / ut_report_finish (HTML)
 
-have() { command -v "$1" >/dev/null 2>&1; }
-
 # ===========================================================================
 # macOS app detection (researched & verified: macOS arm64, system bash 3.2)
 # ===========================================================================
