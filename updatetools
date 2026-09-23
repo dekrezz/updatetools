@@ -716,6 +716,14 @@ ut_changelog_lookup() {
 #           BREW_CASK_SKIP="a b"        -> casks needing interactive sudo (kept
 #                                          out of the automated run, reported).
 #           UPDATETOOLS_CLOSE / UPDATETOOLS_PROTECT — per-token overrides.
+# Record a cask/app that was staged (on-disk or deferred) so the version report
+# does not claim the running process already moved to the new version.
+ut_report_note_staged() {
+  [ "${MAKE_REPORT:-1}" = "1" ] || return 0
+  mkdir -p "$UT_REPORT_DIR" 2>/dev/null || return 0
+  printf '%s\n' "$1" >> "$UT_REPORT_DIR/staged"
+}
+
 ut_upgrade_casks_smart() {
   have brew || { echo "Homebrew not found; skipping casks."; return 0; }
   local greedy_flag="${1:-}"
@@ -723,6 +731,7 @@ ut_upgrade_casks_smart() {
   local close_enabled="${CLOSE_APPS:-1}"
   local skip_re token verdict app bid
   local n_up=0 n_close=0 n_protect=0 n_skip=0
+  local rc=0
   local manual=()
 
   skip_re="$(printf '%s' "$skip_list" | tr ', ' '\n\n' | sed '/^$/d' | paste -sd'|' -)"
@@ -745,29 +754,46 @@ ut_upgrade_casks_smart() {
         bid="$(app_to_bundleid "$app" 2>/dev/null)"
         echo ">> $token: running & safe to close — quitting, upgrading, relaunching"
         if [ -n "$bid" ] && graceful_quit "$bid" 20; then
-          brew upgrade --cask "$token" || true
-          relaunch_app "$bid"
-          n_close=$((n_close+1))
+          if brew upgrade --cask "$token"; then
+            relaunch_app "$bid"
+            n_close=$((n_close+1))
+          else
+            rc=1
+          fi
         else
           echo "   quit did not complete (unsaved work / not scriptable) — staging instead"
-          brew upgrade --cask --no-quit "$token" || true
-          n_protect=$((n_protect+1))
+          if brew upgrade --cask --no-quit "$token"; then
+            ut_report_note_staged "$token"
+            n_protect=$((n_protect+1))
+          else
+            rc=1
+          fi
         fi
         ;;
       protect)
         echo ">> $token: running & protected — staging (new version applies on next launch)"
-        brew upgrade --cask --no-quit "$token" || true
-        n_protect=$((n_protect+1))
+        if brew upgrade --cask --no-quit "$token"; then
+          ut_report_note_staged "$token"
+          n_protect=$((n_protect+1))
+        else
+          rc=1
+        fi
         ;;
       upgrade)
         echo ">> $token: not running — upgrading in place"
-        brew upgrade --cask --no-quit "$token" || true
-        n_up=$((n_up+1))
+        if brew upgrade --cask --no-quit "$token"; then
+          n_up=$((n_up+1))
+        else
+          rc=1
+        fi
         ;;
       *)  # skip = no app artifact (font / CLI-only cask)
         echo ">> $token: no app bundle — upgrading in place"
-        brew upgrade --cask --no-quit "$token" || true
-        n_up=$((n_up+1))
+        if brew upgrade --cask --no-quit "$token"; then
+          n_up=$((n_up+1))
+        else
+          rc=1
+        fi
         ;;
     esac
   done <<< "$(brew outdated --cask $greedy_flag --quiet 2>/dev/null)"
@@ -777,6 +803,9 @@ ut_upgrade_casks_smart() {
     local c; for c in "${manual[@]}"; do echo "  brew upgrade --cask $c"; done
   fi
   echo "casks: $n_up upgraded · $n_close closed+relaunched · $n_protect staged · $n_skip skipped(manual)"
+  [ "$rc" -ne 0 ] && return "$rc"
+  # Staged protect/--no-quit paths leave the running process on the old version.
+  [ "$n_protect" -gt 0 ] && return 3
   return 0
 }
 
@@ -1125,23 +1154,32 @@ ut_update_manual_apps() {
   else
     echo "manual apps: $found scanned · $managed Homebrew-managed · $current current · $matched updates matched · $updated installed · $deferred deferred · $skipped left alone"
   fi
+  # Deferred installs leave the running app on the old bundle until natural exit.
+  [ "$deferred" -gt 0 ] && return 3
   return 0
 }
 
 ut_update_homebrew_all() {
-  local rc=0
+  local rc=0 cask_rc=0
   brew update || rc=1
 
   # Keep this invisible in the dashboard: it is report bookkeeping, not a
   # user-facing update step. It must happen after the index refresh and before
-  # any package changes.
+  # any package changes. Re-captures brew outdated now that `brew update` ran.
   ut_report_begin
 
   HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1 brew upgrade || rc=1
-  ut_upgrade_casks_smart "$GREEDY_FLAG" || rc=1
+  ut_upgrade_casks_smart "$GREEDY_FLAG"; cask_rc=$?
+  if [ "$cask_rc" -eq 3 ]; then
+    : # staged; keep unless a hard failure already happened
+  elif [ "$cask_rc" -ne 0 ]; then
+    rc=1
+  fi
   brew autoremove || rc=1
   brew cleanup -s || rc=1
-  return "$rc"
+  [ "$rc" -ne 0 ] && return "$rc"
+  [ "$cask_rc" -eq 3 ] && return 3
+  return 0
 }
 
 # ===========================================================================
@@ -1214,12 +1252,26 @@ ut_report_capture_cli() {
   ut_capture_cli_versions > "$UT_REPORT_DIR/cli" 2>/dev/null || true
 }
 
+# Brew outdated snapshot, taken before the step loop (like CLI) so a run that
+# disables the Homebrew step still gets a formula/cask diff. Idempotent unless
+# force=1 (used after `brew update` inside the Homebrew step).
+ut_report_capture_brew() {
+  local force="${1:-}"
+  [ "${MAKE_REPORT:-1}" = "1" ] || return 0
+  have brew || return 0
+  mkdir -p "$UT_REPORT_DIR" 2>/dev/null || return 0
+  [ -z "$force" ] && [ -f "$UT_REPORT_DIR/brew" ] && return 0
+  ut_capture_brew_before > "$UT_REPORT_DIR/brew" 2>/dev/null || true
+}
+
 ut_report_begin() {
   [ "${MAKE_REPORT:-1}" = "1" ] || return 0
   mkdir -p "$UT_REPORT_DIR" 2>/dev/null || return 0
   [ -f "$UT_REPORT_DIR/.began" ] && return 0   # idempotent: only the first call captures
   : > "$UT_REPORT_DIR/.began"
-  ut_capture_brew_before   > "$UT_REPORT_DIR/brew" 2>/dev/null || true
+  # After brew update the outdated list is authoritative — refresh even if a
+  # pre-loop snapshot already exists.
+  ut_report_capture_brew force
   ut_report_capture_cli
   return 0
 }
@@ -1244,13 +1296,17 @@ ut_generate_report() {  # $1 = optional output path
   data="$(mktemp)"; data2="$(mktemp)"
 
   # brew: a formula/cask that was outdated before and is no longer outdated now
-  # was successfully upgraded this run.
+  # was successfully upgraded this run. Tokens recorded in staged/ were only
+  # staged (--no-quit / deferred); the running process is still on the old build.
   if [ -f "$UT_REPORT_DIR/brew" ] && have brew; then
     after_brew="$( { brew outdated --quiet 2>/dev/null; \
                      brew outdated --cask --greedy --quiet 2>/dev/null; } )"
     while IFS='|' read -r name old new kind; do
       [ -n "$name" ] || continue
       printf '%s\n' "$after_brew" | grep -qxF "$name" && continue   # still outdated
+      if [ -f "$UT_REPORT_DIR/staged" ] && grep -qxF "$name" "$UT_REPORT_DIR/staged" 2>/dev/null; then
+        continue
+      fi
       _ut_emit_card "$name" "$old" "$new" "$data"
     done < "$UT_REPORT_DIR/brew"
   fi
@@ -2330,6 +2386,7 @@ try {
     transition:flex-grow .6s cubic-bezier(.2,.8,.2,1), background-color .3s ease;
   }
   .seg.done{background:var(--seg)}
+  .seg.staged{background:var(--warn)}
   .seg.skip{background:repeating-linear-gradient(135deg,var(--plate-2) 0 5px,var(--plate) 5px 10px)}
   .seg.fail{background:var(--bad)}
   .seg.run{
@@ -2347,6 +2404,7 @@ try {
   .legend li.pending i{background:var(--plate-2)}
   .legend li.skip i{background:repeating-linear-gradient(135deg,var(--text-3) 0 2px,transparent 2px 4px)}
   .legend li.fail i{background:var(--bad)}
+  .legend li.staged i{background:var(--warn)}
   .legend span{color:var(--text-3)}
 
   /* ── steps: app list, deliberately not a terminal timeline ─────────────── */
@@ -2478,6 +2536,7 @@ try {
   .step.done .step-state svg{stroke-dasharray:32;animation:check-in .45s ease-out both}
   @keyframes check-in{from{stroke-dashoffset:32;opacity:0}to{stroke-dashoffset:0;opacity:1}}
   .step.done .step-state{color:var(--ok)}
+  .step.staged .step-state{color:var(--warn)}
   .step.fail .step-state{color:var(--bad)}
   .step.run .step-state{color:var(--warn)}
   .step.run .step-state svg{animation:spin 1.1s linear infinite}
@@ -2968,6 +3027,7 @@ WEB_HTML_HEAD
   }
   function stepState(s, elapsed) {
     if (s.s === 'done') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4 4 10-10"/></svg>${dur(s.t)}</span>`;
+    if (s.s === 'staged') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6v6l3.5 2"/><circle cx="12" cy="12" r="9"/></svg>staged${dur(s.t) ? ' · ' + dur(s.t) : ''}</span>`;
     if (s.s === 'fail') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>${dur(s.t)}</span>`;
     if (s.s === 'skip' && s.why === 'off') return `<span class="step-state">off</span>`;
     if (s.s === 'skip') return `<span class="step-state"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 12h10"/></svg>${dur(s.t)}</span>`;
@@ -3018,13 +3078,14 @@ WEB_HTML_HEAD
   }
   function selectedCounts(steps, phase, localOn) {
     const sel = (steps || []).filter((s, i) => stepSelected(s, i, phase, localOn));
-    let done = 0, skip = 0, fail = 0;
+    let done = 0, skip = 0, fail = 0, staged = 0;
     sel.forEach((s) => {
       if (s.s === 'done') done++;
       else if (s.s === 'skip') skip++;
       else if (s.s === 'fail') fail++;
+      else if (s.s === 'staged') staged++;
     });
-    return { total: sel.length, done, skip, fail };
+    return { total: sel.length, done, skip, fail, staged };
   }
   function paintRibbon(st) {
     const rib = $('ribbon');
@@ -3074,12 +3135,17 @@ WEB_HTML_HEAD
       $('phase').textContent = 'choose steps';
       $('clock').textContent = '00:00';
       $('chooser-bar').classList.add('on');
+    } else if (st.phase === 'error') {
+      $('chooser-bar').classList.remove('on');
+      $('phase').textContent = 'aborted';
+      $('clock').textContent = '00:00';
     } else {
       $('chooser-bar').classList.remove('on');
+      const finished = counts.done + counts.skip + counts.fail + counts.staged;
       $('phase').textContent =
         st.phase === 'done'
-          ? [`${counts.done} steps completed`, counts.skip ? `${counts.skip} skipped` : '', counts.fail ? `${counts.fail} failed` : ''].filter(Boolean).join(' · ')
-                            : `${counts.done + counts.skip + counts.fail} of ${counts.total} steps`;
+          ? [`${counts.done} steps completed`, counts.staged ? `${counts.staged} staged` : '', counts.skip ? `${counts.skip} skipped` : '', counts.fail ? `${counts.fail} failed` : ''].filter(Boolean).join(' · ')
+                            : `${finished} of ${counts.total} steps`;
       // Password entry is not part of the run. The clock stays at 00:00 until
       // the tools themselves start, then counts only their time.
       $('clock').textContent = st.prompt ? '00:00' : fmt(st.elapsed || 0);
@@ -3141,11 +3207,21 @@ WEB_HTML_HEAD
     }
 
     // result
-    if (st.phase === 'done') {
+    if (st.phase === 'error') {
       $('result').classList.add('on');
+      $('verdict').hidden = false;
+      $('verdict').classList.add('bad');
+      $('verdict').classList.remove('warn');
+      $('r-mark').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m8 8 8 8M16 8l-8 8"/></svg>`;
+      $('r-head').textContent = st.message || 'Sudo password required but not accepted';
+      $('open-ledger').hidden = true;
+      document.title = 'updatetools — aborted';
+    } else if (st.phase === 'done') {
+      $('result').classList.add('on');
+      $('open-ledger').hidden = false;
       // A red cross means "this run achieved nothing". One failed step among many
       // successful ones is a warning, not a failure of the whole run.
-      const failed = counts.fail > 0, total_fail = failed && counts.done === 0;
+      const failed = counts.fail > 0, total_fail = failed && counts.done === 0 && counts.staged === 0;
       $('verdict').hidden = !failed;
       $('verdict').classList.toggle('bad', total_fail);
       $('verdict').classList.toggle('warn', failed && !total_fail);
@@ -3155,6 +3231,12 @@ WEB_HTML_HEAD
           : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7.5v6M12 16.8v.2"/></svg>`;
         $('r-head').textContent = total_fail ? 'Nothing could be updated'
           : `Done, ${counts.fail} step${counts.fail === 1 ? '' : 's'} needs attention`;
+      } else if (counts.staged > 0 && counts.done === 0) {
+        $('verdict').hidden = false;
+        $('verdict').classList.remove('bad');
+        $('verdict').classList.add('warn');
+        $('r-mark').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6v6l3.5 2"/><circle cx="12" cy="12" r="9"/></svg>`;
+        $('r-head').textContent = 'Staged — applies when apps quit';
       }
 
       const ups = st.updates || [];
@@ -3170,6 +3252,7 @@ WEB_HTML_HEAD
       }
       $('ledger-facts').innerHTML = [
         [counts.done, 'completed'],
+        ...(counts.staged ? [[counts.staged, 'staged']] : []),
         [counts.skip, 'skipped'],
         ...(counts.fail ? [[counts.fail, 'failed']] : []),
         [fmt(st.elapsed), 'elapsed'],
@@ -3189,7 +3272,7 @@ WEB_HTML_HEAD
     } else if (st.phase === 'choose') {
       document.title = 'updatetools — choose steps';
     } else {
-      const finished = counts.done + counts.skip + counts.fail;
+      const finished = counts.done + counts.skip + counts.fail + counts.staged;
       const pct = counts.total ? (100 * finished / counts.total) : 0;
       document.title = `updatetools — ${Math.round(pct)}%`;
     }
@@ -3722,7 +3805,7 @@ WEB_HTML_HEAD
         applyLayout(st.layoutNow || '', st.layoutPass || 'English');
       } else if (asking) hidePassword();
       loadLog();
-      if (st.phase === 'done') { setTimeout(poll, 2000); return; }
+      if (st.phase === 'done' || st.phase === 'error') { setTimeout(poll, 2000); return; }
     } catch (e) {
       // the run exits and takes the server with it; nothing to announce
       misses++;
@@ -3819,9 +3902,14 @@ ut_remember_password_layout() {
 # Globals it reads: STEPS/STATUS/STEP_T0/STEP_SEC/TOTAL/T0/LOG/UT_WEB_UPDATES.
 ut_web_state() {
   [ -n "$WEB_DIR" ] || return 0
-  local phase="${1:-run}" i done_n=0 skip_n=0 fail_n=0 steps="" tail_line="" label name action slug key
+  local phase="${1:-run}" i done_n=0 skip_n=0 fail_n=0 staged_n=0 steps="" tail_line="" label name action slug key
   for ((i=0;i<TOTAL;i++)); do
-    case "${STATUS[i]}" in done) done_n=$((done_n+1));; skip) skip_n=$((skip_n+1));; fail) fail_n=$((fail_n+1));; esac
+    case "${STATUS[i]}" in
+      done) done_n=$((done_n+1));;
+      skip) skip_n=$((skip_n+1));;
+      fail) fail_n=$((fail_n+1));;
+      staged) staged_n=$((staged_n+1));;
+    esac
     label="${STEPS[i]%%¦*}"; name="$label"; action=""
     if [[ "$label" == *" · "* ]]; then name="${label%% · *}"; action="${label#* · }"; fi
     slug="${STEP_SLUG[i]:-}"
@@ -3836,7 +3924,7 @@ ut_web_state() {
     [ -n "${STEP_T0[i]:-}" ]  && steps+=",\"b\":$(( ${STEP_T0[i]} - T0 ))"
     steps+="}"
   done
-  if [ "$phase" != "done" ] && [ "$phase" != "choose" ]; then
+  if [ "$phase" != "done" ] && [ "$phase" != "choose" ] && [ "$phase" != "error" ]; then
     tail_line=$(
       tail -n 40 "$LOG" 2>/dev/null | tr -d '\r' \
         | LC_ALL=C sed $'s/\033\\[[0-9;?]*[a-zA-Z]//g' \
@@ -3858,8 +3946,11 @@ ut_web_state() {
     cp -f "$UT_WEB_REPORT" "$WEB_DIR/report.html" 2>/dev/null
   fi
   {
-    printf '{"phase":"%s","elapsed":%d,"total":%d,"done":%d,"skip":%d,"fail":%d' \
-      "$phase" "$((SECONDS-T0))" "$TOTAL" "$done_n" "$skip_n" "$fail_n"
+    printf '{"phase":"%s","elapsed":%d,"total":%d,"done":%d,"skip":%d,"fail":%d,"staged":%d' \
+      "$phase" "$((SECONDS-T0))" "$TOTAL" "$done_n" "$skip_n" "$fail_n" "$staged_n"
+    if [ "$phase" = "error" ]; then
+      printf ',"message":"%s"' "$(ut_json_escape "${UT_WEB_ERROR:-sudo password required but not accepted — aborting before steps.}")"
+    fi
     printf ',"tail":"%s"' "$(ut_json_escape "$tail_line")"
     [ -n "${UT_PROMPT:-}" ] && printf ',"prompt":"%s"' "$(ut_json_escape "$UT_PROMPT")"
     if [ -n "${UT_PROMPT:-}" ]; then
@@ -4101,12 +4192,15 @@ ut_web_stop() {
 npm_update_global() {
   # npm itself lives in /opt/homebrew and is brew-managed; npm update -g includes it
   # and fails with EACCES. Update only non-npm packages explicitly.
-  local pkgs
+  local pkgs rc=0
   pkgs=$(npm outdated -g --depth=0 --parseable 2>/dev/null \
     | cut -d: -f4 | sed 's/@[^@]*$//' | grep -v '^npm$' | tr '\n' ' ')
-  [ -n "$pkgs" ] && npm install -g $pkgs || true
+  if [ -n "$pkgs" ]; then
+    npm install -g $pkgs || rc=$?
+  fi
   # Cache may have root-owned files from an old npm bug; verify non-fatally.
   npm cache verify || true
+  return "$rc"
 }
 
 # Codex CLI - npm is the ONE supported install source here.
@@ -4130,12 +4224,115 @@ codex_update_npm_only() {
 }
 
 pnpm_update_global() {
-  pnpm self-update 2>/dev/null || brew upgrade pnpm 2>/dev/null || true
+  local rc=0 self_rc=0
+  # Prefer pnpm's own updater; fall back to the Homebrew formula when present.
+  # A failed self-update with no brew formula is a real failure — do not drop it.
+  # Keep stderr in the step log when this failure is what sets rc.
+  pnpm self-update; self_rc=$?
+  if [ "$self_rc" -ne 0 ]; then
+    if have brew && brew list pnpm >/dev/null 2>&1; then
+      if ut_brew_cli_lock; then
+        brew upgrade pnpm || rc=$?
+        ut_brew_cli_unlock
+      else
+        rc=1
+      fi
+    else
+      rc=$self_rc
+    fi
+  fi
   # pnpm's global bin dir may not be in PATH when launched non-interactively.
   local pnpm_bin
   pnpm_bin="$(pnpm config get global-bin-dir 2>/dev/null)"
   [ -n "$pnpm_bin" ] && export PATH="$PATH:$pnpm_bin"
-  pnpm update -g --latest || true
+  pnpm update -g --latest || rc=$?
+  return "$rc"
+}
+
+uv_update_self_and_tools() {
+  local rc=0 self_rc=0
+  # Keep stderr in the step log when this failure is what sets rc.
+  uv self update; self_rc=$?
+  if [ "$self_rc" -ne 0 ]; then
+    if have brew && brew list uv >/dev/null 2>&1; then
+      if ut_brew_cli_lock; then
+        brew upgrade uv || rc=$?
+        ut_brew_cli_unlock
+      else
+        rc=1
+      fi
+    else
+      rc=$self_rc
+    fi
+  fi
+  uv tool upgrade --all || rc=$?
+  return "$rc"
+}
+
+# Serialize rare `brew upgrade <formula>` fallbacks from the CLI wave (pnpm/uv)
+# so two brew operations never overlap. Native self-update / package paths are
+# unlocked. mkdir is atomic; same pattern as the run-level instance lock.
+# Holder pid is recorded so a stall-watchdog SIGKILL cannot leave a permanent
+# lock. A dead pid is reclaimed immediately. An empty pid is the mkdir→write
+# window, not abandonment, and is reclaimed only after it stays empty.
+UT_BREW_CLI_LOCK="${TMPDIR:-/tmp}/updatetools-brew-cli.lock"
+# Drop a lock dir only when its recorded holder is still the one we observed.
+# mv is the atomic handoff: two waiters cannot both delete a live owner's dir.
+ut_brew_cli_reclaim() {
+  local seen="$1" stolen holder
+  stolen="${UT_BREW_CLI_LOCK}.stale.${RANDOM}"
+  mv "$UT_BREW_CLI_LOCK" "$stolen" 2>/dev/null || return 0
+  holder="$(cat "$stolen/pid" 2>/dev/null || true)"
+  holder="${holder%%[!0-9]*}"
+  if [ "$holder" != "$seen" ] || { [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; }; then
+    mv "$stolen" "$UT_BREW_CLI_LOCK" 2>/dev/null || rm -rf "$stolen"
+    return 0
+  fi
+  rm -rf "$stolen"
+}
+ut_brew_cli_lock() {
+  local waited=0 empty_waits=0 holder
+  while true; do
+    if mkdir "$UT_BREW_CLI_LOCK" 2>/dev/null; then
+      # bash 3.2: $$ is the parent even inside `{ … } &`. A child sh's PPID is
+      # the real holder. Must not wrap this in $() — that would record a dead
+      # command-substitution subshell. A failed write means we do not hold it.
+      sh -c 'echo $PPID' > "$UT_BREW_CLI_LOCK/pid" || {
+        rm -rf "$UT_BREW_CLI_LOCK"
+        return 1
+      }
+      return 0
+    fi
+    holder="$(cat "$UT_BREW_CLI_LOCK/pid" 2>/dev/null || true)"
+    holder="${holder%%[!0-9]*}"
+    if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+      empty_waits=0
+    elif [ -n "$holder" ]; then
+      # Dead holder. Reclaim immediately; the pid is rechecked after mv.
+      empty_waits=0
+      ut_brew_cli_reclaim "$holder"
+      continue
+    else
+      # No pid yet: the owner is between mkdir and the pid write. That window
+      # is not abandonment. Only a dir that stays pid-less is a crashed acquire.
+      empty_waits=$((empty_waits + 1))
+      if [ "$empty_waits" -ge 20 ]; then
+        empty_waits=0
+        ut_brew_cli_reclaim ""
+        continue
+      fi
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+    # ~10 minutes only while a live holder still owns the lock.
+    if [ "$waited" -gt 6000 ]; then
+      echo "error: timed out waiting for brew CLI lock ($UT_BREW_CLI_LOCK, pid ${holder:-none})" >&2
+      return 1
+    fi
+  done
+}
+ut_brew_cli_unlock() {
+  rm -rf "$UT_BREW_CLI_LOCK" 2>/dev/null || true
 }
 
 # Cask upgrades go through ut_upgrade_casks_smart() above,
@@ -4155,12 +4352,16 @@ vscode_cli() {
 vscode_quiet() {
   # Cursor/VS Code's CLI still prints Node url.parse deprecations and a
   # per-extension "Installing extensions..." banner even when nothing changes.
-  vscode_cli "$@" 2>&1 | grep -vE \
+  # Capture the CLI exit separately so grep's filter (|| true) cannot mask it.
+  local out rc=0
+  out="$(vscode_cli "$@" 2>&1)" || rc=$?
+  printf '%s\n' "$out" | grep -vE \
     'DeprecationWarning|url\.parse\(\)|trace-deprecation|^Installing extensions|already installed' \
     || true
+  return "$rc"
 }
 vscode_update_exts() {
-  local e listed n=0 skip=0
+  local e listed n=0 skip=0 rc=0
   listed="$(vscode_cli --list-extensions 2>/dev/null | sed '/^[[:space:]]*$/d')"
   [ -n "$listed" ] || { echo "no extensions installed"; return 0; }
   while IFS= read -r e; do
@@ -4172,9 +4373,9 @@ vscode_update_exts() {
     fi
     n=$((n+1))
   done <<< "$listed"
-  vscode_quiet --update-extensions
+  vscode_quiet --update-extensions || rc=$?
   echo "vscode: $n marketplace extension(s) checked · $skip skipped"
-  return 0
+  return "$rc"
 }
 
 LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
@@ -4190,7 +4391,7 @@ STEPS=(
   "Applications · manual DMGs¦have brew && [ \"\$QUIET_APPS\" = \"1\" ]¦ut_update_manual_apps"
   "npm · global packages¦have npm¦npm_update_global"
   "pnpm · global packages¦have pnpm¦pnpm_update_global"
-  "uv · self + tools¦have uv¦{ uv self update 2>/dev/null||brew upgrade uv 2>/dev/null; }; uv tool upgrade --all 2>/dev/null||true"
+  "uv · self + tools¦have uv¦uv_update_self_and_tools"
   "cargo · update binaries¦have cargo¦{ have cargo-install-update||cargo install cargo-update; }; cargo install-update -a"
   "Supabase CLI¦have supabase¦if have brew && brew list supabase >/dev/null 2>&1; then brew upgrade supabase; elif have npm; then npm install -g supabase@latest; fi"
   "Vercel CLI¦have vercel¦if have brew && brew list vercel-cli >/dev/null 2>&1; then brew upgrade vercel-cli; elif have npm && npm list -g vercel >/dev/null 2>&1; then npm install -g vercel@latest; else echo 'vercel present but no known update source matched'; fi"
@@ -4203,7 +4404,7 @@ STEPS=(
 )
 
 TOTAL=${#STEPS[@]}
-STATUS=()                       # done|skip|fail|run|pending per step
+STATUS=()                       # done|skip|fail|run|pending|staged per step
 STEP_KEY=()                     # stable slug per step (CLI / enabled file)
 STEP_ON=()                      # 1 = run this step, 0 = user-disabled
 STEP_WHY=()                     # off|guard when STATUS=skip
@@ -4243,6 +4444,8 @@ cleanup() {
   [ -n "$SUDO_KEEPER" ] && kill "$SUDO_KEEPER" 2>/dev/null
   [ -n "$WRAP_DIR" ] && rm -rf "$WRAP_DIR" 2>/dev/null
   [ -n "$LOCKDIR" ] && rm -rf "$LOCKDIR" 2>/dev/null
+  [ -n "${UT_BREW_CLI_LOCK:-}" ] && rm -rf "$UT_BREW_CLI_LOCK" 2>/dev/null
+  [ -n "${UT_STEP_LOG_DIR:-}" ] && rm -rf "$UT_STEP_LOG_DIR" 2>/dev/null
   [ -n "${UT_LASTREPORT:-}" ] && rm -f "$UT_LASTREPORT" 2>/dev/null
   [ -n "${UT_REPORT_DIR:-}" ] && rm -rf "$UT_REPORT_DIR" 2>/dev/null
   SUDO_PW=""
@@ -4256,7 +4459,7 @@ trap 'cleanup' EXIT
 # Closing the terminal sends SIGHUP: end the run and take the current step's
 # process tree with it — brew ignores HUP (we set that), so it would otherwise be
 # left orphaned, parked on a password prompt nobody can answer.
-trap '[ -n "${CUR_PID:-}" ] && kill_tree "$CUR_PID"; cleanup; exit 129' HUP
+trap '[ -n "${CUR_PID:-}" ] && kill_tree "$CUR_PID"; for _ut_p in ${CUR_PIDS:-}; do kill_tree "$_ut_p"; done; cleanup; exit 129' HUP
 
 # Prime sudo before the run so a step doesn't stall on a hidden prompt.
 #
@@ -4277,6 +4480,303 @@ sudo_prime() {
     rm -f "$PROMPT_REP"
   done
   return 1
+}
+
+# Map a step command's exit code to a STATUS token.
+# Exit 3 = staged (update recorded, running process still on the old version).
+ut_status_from_rc() {
+  local rc="$1" stalled="${2:-0}"
+  if [ "$stalled" = "1" ]; then
+    printf '%s\n' fail
+  elif [ "$rc" -eq 3 ]; then
+    printf '%s\n' staged
+  elif [ "$rc" -ne 0 ]; then
+    printf '%s\n' fail
+  else
+    printf '%s\n' done
+  fi
+}
+
+# Homebrew runs alone first; applications (brew catalogue reads) serial next;
+# Report stays last. CLI steps that only touch their own tool tree may wave.
+# Steps whose primary path is `brew upgrade <formula>` stay serial after the
+# wave so two brew operations never overlap.
+ut_step_waveable() {
+  case "${1:-}" in
+    homebrew|applications|report|supabase|vercel) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+ut_step_post_wave() {
+  case "${1:-}" in
+    supabase|vercel) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Soft-fail path only when sudo is already cached. Otherwise require a password
+# (web askpass or TTY) and abort the run before any step starts.
+ut_require_sudo() {
+  local mode="${1:-plain}"
+  if sudo -n true 2>/dev/null; then
+    return 0
+  fi
+  if [ "$mode" = "web" ]; then
+    if sudo_prime; then
+      return 0
+    fi
+    echo "error: sudo password required but not accepted — aborting before steps." >&2
+    return 1
+  fi
+  if [ -t 0 ]; then
+    if sudo -v; then
+      return 0
+    fi
+    echo "error: sudo password required but not accepted — aborting before steps." >&2
+    return 1
+  fi
+  echo "error: sudo password required but no TTY — aborting before steps." >&2
+  return 1
+}
+
+# Append a per-step log into the shared run log (used by the dashboard slicer).
+ut_absorb_step_log() {
+  local steplog="$1"
+  [ -f "$steplog" ] || return 0
+  cat "$steplog" >> "$LOG" 2>/dev/null
+}
+
+# Wait on one background step with the stall (+ optional askpass) watchdog.
+# Sets UT_WAIT_RC and UT_WAIT_STALLED.
+ut_watch_pid() {
+  local pid="$1" steplog="$2"
+  local last_size last_change size stalled=0 prompt
+  UT_WAIT_RC=0
+  UT_WAIT_STALLED=0
+  last_size=$(wc -c < "$steplog" 2>/dev/null); last_size=${last_size// /}
+  last_change=$SECONDS
+  CUR_PID=$pid
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ -n "${PROMPT_REQ:-}" ] && [ -f "$PROMPT_REQ" ]; then
+      prompt=$(cat "$PROMPT_REQ"); rm -f "$PROMPT_REQ"
+      if ut_web_ask "${prompt:-Password:}"; then
+        last_change=$SECONDS
+      else
+        kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+        echo "######## no password entered within ${PROMPT_TIMEOUT}s — step aborted ########" >> "$steplog"
+        stalled=1
+        break
+      fi
+    fi
+    if [ "${STALL_TIMEOUT:-0}" -gt 0 ] 2>/dev/null; then
+      size=$(wc -c < "$steplog" 2>/dev/null); size=${size// /}
+      if [ "$size" != "$last_size" ]; then
+        last_size=$size; last_change=$SECONDS
+      elif [ $(( SECONDS - last_change )) -ge "$STALL_TIMEOUT" ]; then
+        kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+        echo "######## stalled ${STALL_TIMEOUT}s with no output — killed ########" >> "$steplog"
+        stalled=1
+        break
+      fi
+    fi
+    [ -n "${WEB_DIR:-}" ] && ut_web_state run
+    sleep 0.4
+  done
+  CUR_PID=""
+  wait "$pid" 2>/dev/null
+  UT_WAIT_RC=$?
+  UT_WAIT_STALLED=$stalled
+}
+
+# Start step $1 in the background; log goes to UT_STEP_LOG_DIR/$1.log.
+ut_spawn_step() {
+  local i="$1"
+  local entry="${STEPS[i]}"
+  local cmd="${entry##*¦}"
+  local steplog="${UT_STEP_LOG_DIR}/$i.log"
+  : > "$steplog"
+  STATUS[i]="run"
+  STEP_WHY[i]=""
+  STEP_T0[i]=$SECONDS
+  {
+    trap '' HUP TTIN TTOU
+    echo; echo "######## ${entry%%¦*} ########"
+    eval "$cmd"
+  } >>"$steplog" 2>&1 </dev/null &
+  STEP_PID[i]=$!
+  CUR_PIDS="${CUR_PIDS:+$CUR_PIDS }${STEP_PID[i]}"
+}
+
+ut_finish_step() {
+  local i="$1" rc="$2" stalled="${3:-0}"
+  local steplog="${UT_STEP_LOG_DIR}/$i.log"
+  ut_absorb_step_log "$steplog"
+  STEP_SEC[i]=$(( SECONDS - ${STEP_T0[i]:-$SECONDS} ))
+  STATUS[i]="$(ut_status_from_rc "$rc" "$stalled")"
+  STEP_PID[i]=""
+}
+
+# Skip/guard check for step i. Returns 0 if the step should run.
+ut_step_should_run() {
+  local i="$1"
+  if [ "${STEP_ON[i]}" != "1" ]; then
+    STATUS[i]="skip"; STEP_WHY[i]="off"
+    return 1
+  fi
+  local entry="${STEPS[i]}"
+  local guard="${entry#*¦}"; guard="${guard%%¦*}"
+  if ! eval "$guard" >/dev/null 2>&1; then
+    STATUS[i]="skip"; STEP_WHY[i]="guard"
+    return 1
+  fi
+  return 0
+}
+
+# Run one step to completion (serial path: Homebrew, Report, or plain fallback).
+ut_run_step_serial() {
+  local i="$1"
+  local steplog
+  if ! ut_step_should_run "$i"; then
+    [ -n "${WEB_DIR:-}" ] && ut_web_state run
+    return 0
+  fi
+  [ -n "${PROMPT_REQ:-}" ] && rm -f "$PROMPT_REQ" "$PROMPT_REP"
+  sudo -n -v 2>/dev/null || true
+  ut_spawn_step "$i"
+  steplog="${UT_STEP_LOG_DIR}/$i.log"
+  [ -n "${WEB_DIR:-}" ] && ut_web_state run
+  ut_watch_pid "${STEP_PID[i]}" "$steplog"
+  ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED"
+  [ -n "${WEB_DIR:-}" ] && ut_web_state run
+}
+
+# After Homebrew: run every waveable enabled step concurrently, then wait.
+ut_run_wave() {
+  local i pid steplog any size last_size last_change stalled rc
+  local -a wave_idx=()
+  # bash 3.2: track per-step stall clocks in parallel arrays
+  local -a w_last_size=() w_last_change=()
+
+  for ((i=0;i<TOTAL;i++)); do
+    ut_step_waveable "${STEP_KEY[i]}" || continue
+    if ut_step_should_run "$i"; then
+      wave_idx+=("$i")
+    else
+      [ -n "${WEB_DIR:-}" ] && ut_web_state run
+    fi
+  done
+  [ "${#wave_idx[@]}" -eq 0 ] && return 0
+
+  CUR_PIDS=""
+  for i in "${wave_idx[@]}"; do
+    [ -n "${PROMPT_REQ:-}" ] && rm -f "$PROMPT_REQ" "$PROMPT_REP"
+    sudo -n -v 2>/dev/null || true
+    ut_spawn_step "$i"
+    steplog="${UT_STEP_LOG_DIR}/$i.log"
+    w_last_size[i]=$(wc -c < "$steplog" 2>/dev/null); w_last_size[i]=${w_last_size[i]// /}
+    w_last_change[i]=$SECONDS
+  done
+  [ -n "${WEB_DIR:-}" ] && ut_web_state run
+
+  while true; do
+    any=0
+    # One askpass at a time for the whole wave.
+    if [ -n "${PROMPT_REQ:-}" ] && [ -f "$PROMPT_REQ" ]; then
+      local prompt
+      prompt=$(cat "$PROMPT_REQ"); rm -f "$PROMPT_REQ"
+      if ut_web_ask "${prompt:-Password:}"; then
+        for i in "${wave_idx[@]}"; do
+          [ -n "${STEP_PID[i]:-}" ] && w_last_change[i]=$SECONDS
+        done
+      else
+        for i in "${wave_idx[@]}"; do
+          pid="${STEP_PID[i]:-}"
+          [ -n "$pid" ] || continue
+          steplog="${UT_STEP_LOG_DIR}/$i.log"
+          kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+          echo "######## no password entered within ${PROMPT_TIMEOUT}s — step aborted ########" >> "$steplog"
+          wait "$pid" 2>/dev/null
+          ut_finish_step "$i" 1 1
+        done
+        CUR_PIDS=""
+        [ -n "${WEB_DIR:-}" ] && ut_web_state run
+        return 0
+      fi
+    fi
+
+    for i in "${wave_idx[@]}"; do
+      pid="${STEP_PID[i]:-}"
+      [ -n "$pid" ] || continue
+      steplog="${UT_STEP_LOG_DIR}/$i.log"
+      if kill -0 "$pid" 2>/dev/null; then
+        any=1
+        if [ "${STALL_TIMEOUT:-0}" -gt 0 ] 2>/dev/null; then
+          size=$(wc -c < "$steplog" 2>/dev/null); size=${size// /}
+          if [ "$size" != "${w_last_size[i]}" ]; then
+            w_last_size[i]=$size; w_last_change[i]=$SECONDS
+          elif [ $(( SECONDS - ${w_last_change[i]} )) -ge "$STALL_TIMEOUT" ]; then
+            kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+            echo "######## stalled ${STALL_TIMEOUT}s with no output — killed ########" >> "$steplog"
+            wait "$pid" 2>/dev/null
+            ut_finish_step "$i" 1 1
+            continue
+          fi
+        fi
+      else
+        wait "$pid" 2>/dev/null; rc=$?
+        ut_finish_step "$i" "$rc" 0
+      fi
+    done
+
+    # Rebuild CUR_PIDS from still-running wave members.
+    CUR_PIDS=""
+    for i in "${wave_idx[@]}"; do
+      [ -n "${STEP_PID[i]:-}" ] && CUR_PIDS="${CUR_PIDS:+$CUR_PIDS }${STEP_PID[i]}"
+    done
+
+    [ -n "${WEB_DIR:-}" ] && ut_web_state run
+    [ "$any" = "0" ] && break
+    sleep 0.4
+  done
+  CUR_PIDS=""
+}
+
+# Drive STEPS: Homebrew alone → independent CLI wave → Report last.
+ut_run_steps() {
+  local i
+  UT_STEP_LOG_DIR="${TMPDIR:-/tmp}/updatetools-steps-$$"
+  mkdir -p "$UT_STEP_LOG_DIR"
+  STEP_PID=()
+  CUR_PIDS=""
+
+  # Homebrew first and alone (never concurrent with the CLI wave).
+  for ((i=0;i<TOTAL;i++)); do
+    [ "${STEP_KEY[i]}" = "homebrew" ] || continue
+    ut_run_step_serial "$i"
+  done
+
+  # Manual DMG apps use brew list/info — serial after Homebrew, before the wave.
+  for ((i=0;i<TOTAL;i++)); do
+    [ "${STEP_KEY[i]}" = "applications" ] || continue
+    ut_run_step_serial "$i"
+  done
+
+  ut_run_wave
+
+  # Serial brew-formula CLI steps (must not overlap each other or the wave).
+  for ((i=0;i<TOTAL;i++)); do
+    ut_step_post_wave "${STEP_KEY[i]}" || continue
+    ut_run_step_serial "$i"
+  done
+
+  for ((i=0;i<TOTAL;i++)); do
+    [ "${STEP_KEY[i]}" = "report" ] || continue
+    ut_run_step_serial "$i"
+  done
+
+  rm -rf "$UT_STEP_LOG_DIR" 2>/dev/null
+  UT_STEP_LOG_DIR=""
 }
 
 # ===========================================================================
@@ -4372,7 +4872,13 @@ export GIT_TERMINAL_PROMPT=0
   ut_save_enabled
   rm -f "$WEB_DIR/start"
 
-  sudo_prime || true
+  if ! ut_require_sudo web; then
+    UT_WEB_ERROR="sudo password required but not accepted — aborting before steps."
+    ut_web_state error
+    wait "$WEB_PID" 2>/dev/null
+    ut_web_stop
+    return 1
+  fi
   # Password time is not part of the run. The clock starts when tools start.
   T0=$SECONDS
   ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
@@ -4380,86 +4886,18 @@ export GIT_TERMINAL_PROMPT=0
 
   # Before any step, including when Homebrew itself is turned off.
   ut_report_capture_cli
+  ut_report_capture_brew
 
-  local entry guard cmd pid rc stalled last_size last_change size prompt reply
-  for ((i=0;i<TOTAL;i++)); do
-    CUR_STEP=$i
-    entry="${STEPS[i]}"
-    guard="${entry#*¦}"; guard="${guard%%¦*}"
-    cmd="${entry##*¦}"
-
-    if [ "${STEP_ON[i]}" != "1" ]; then
-      STATUS[i]="skip"; STEP_WHY[i]="off"; ut_web_state run; continue
-    fi
-
-    if ! eval "$guard" >/dev/null 2>&1; then
-      STATUS[i]="skip"; STEP_WHY[i]="guard"; ut_web_state run; continue
-    fi
-
-    STATUS[i]="run"
-    STEP_WHY[i]=""
-    STEP_T0[i]=$SECONDS
-    ut_web_state run
-    rm -f "$PROMPT_REQ" "$PROMPT_REP"
-    sudo -n -v 2>/dev/null || true
-    {
-      # Detach the step from our controlling terminal so an askpass prompt can't
-      # deliver SIGHUP/SIGTTIN to brew's process group mid-upgrade.
-      trap '' HUP TTIN TTOU
-      echo; echo "######## ${entry%%¦*} ########"
-      eval "$cmd"
-    } >>"$LOG" 2>&1 </dev/null &
-    pid=$!
-    CUR_PID=$pid
-
-    last_size=$(wc -c < "$LOG" 2>/dev/null); last_size=${last_size// /}
-    last_change=$SECONDS
-    stalled=0
-
-    while kill -0 "$pid" 2>/dev/null; do
-      # A password request surfaces in the dashboard, not here.
-      if [ -f "$PROMPT_REQ" ]; then
-        prompt=$(cat "$PROMPT_REQ"); rm -f "$PROMPT_REQ"
-        if ut_web_ask "${prompt:-Password:}"; then
-          last_change=$SECONDS      # don't penalise time spent waiting on the user
-        else
-          kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
-          echo "######## no password entered within ${PROMPT_TIMEOUT}s — step aborted ########" >> "$LOG"
-          stalled=1
-          break
-        fi
-      fi
-
-      # Stall watchdog: no new output for STALL_TIMEOUT seconds => wedged.
-      if [ "${STALL_TIMEOUT:-0}" -gt 0 ] 2>/dev/null; then
-        size=$(wc -c < "$LOG" 2>/dev/null); size=${size// /}
-        if [ "$size" != "$last_size" ]; then
-          last_size=$size; last_change=$SECONDS
-        elif [ $(( SECONDS - last_change )) -ge "$STALL_TIMEOUT" ]; then
-          kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
-          echo "######## stalled ${STALL_TIMEOUT}s with no output — killed ########" >> "$LOG"
-          stalled=1
-          break
-        fi
-      fi
-
-      ut_web_state run
-      sleep 0.4
-    done
-    CUR_PID=""
-    wait "$pid" 2>/dev/null; rc=$?
-    STEP_SEC[i]=$(( SECONDS - ${STEP_T0[i]:-$SECONDS} ))
-    if [ "$stalled" = 1 ] || [ "$rc" -ne 0 ]; then STATUS[i]="fail"; else STATUS[i]="done"; fi
-    ut_web_state run
-  done
+  ut_run_steps
 
   # ── after: counts, the version diff, where things landed ──────────────────
-  local done_n=0 skip_n=0 fail_n=0
+  local done_n=0 skip_n=0 fail_n=0 staged_n=0
   for ((i=0;i<TOTAL;i++)); do
     case "${STATUS[i]}" in
       done) done_n=$((done_n+1)) ;;
       skip) skip_n=$((skip_n+1)) ;;
       fail) fail_n=$((fail_n+1)) ;;
+      staged) staged_n=$((staged_n+1)) ;;
     esac
   done
   # The Report step may be off. The diff still has to land on the dashboard.
@@ -4486,8 +4924,9 @@ export GIT_TERMINAL_PROMPT=0
 
 run_plain() {
   # Plain mode uses the same STEPS table as the dashboard: saved enabled keys
-  # plus --only/--skip, then runs immediately (no browser wait).
-  local i entry guard cmd label rc done_n=0 skip_n=0 fail_n=0
+  # plus --only/--skip, then runs immediately (no browser wait). Same stall
+  # watchdog and step graph (Homebrew → wave → Report) as run_web.
+  local i entry label done_n=0 skip_n=0 fail_n=0 staged_n=0
   section() { printf '\n\033[1;36m== %s ==\033[0m\n' "$*"; }
   note()    { printf '   %s\n' "$*"; }
 
@@ -4502,62 +4941,244 @@ run_plain() {
   note "steps: $(ut_all_step_keys)"
   note "enabled file: $(ut_enabled_file)"
 
-  # Soft sudo refresh on a TTY; never block forever when stdin is not a terminal.
-  if [ -t 0 ]; then
-    sudo -v 2>/dev/null || true
-  else
-    sudo -n true 2>/dev/null || true
+  if ! ut_require_sudo plain; then
+    return 1
   fi
   T0=$SECONDS
 
   ut_report_capture_cli
+  ut_report_capture_brew
 
+  # Announce each step as it starts by wrapping the shared runner with notes.
+  # Homebrew alone, then the wave (parallel), then report — same as run_web.
   for ((i=0;i<TOTAL;i++)); do
-    CUR_STEP=$i
-    entry="${STEPS[i]}"
-    label="${entry%%¦*}"
-    guard="${entry#*¦}"; guard="${guard%%¦*}"
-    cmd="${entry##*¦}"
+    [ "${STEP_KEY[i]}" = "homebrew" ] || continue
+    entry="${STEPS[i]}"; label="${entry%%¦*}"
     section "$label"
-
     if [ "${STEP_ON[i]}" != "1" ]; then
-      STATUS[i]="skip"; STEP_WHY[i]="off"
-      note "skipped (turned off)"
-      continue
+      STATUS[i]="skip"; STEP_WHY[i]="off"; note "skipped (turned off)"; continue
     fi
+    local guard="${entry#*¦}"; guard="${guard%%¦*}"
     if ! eval "$guard" >/dev/null 2>&1; then
       STATUS[i]="skip"; STEP_WHY[i]="guard"
-      note "skipped (tool not installed / guard failed)"
-      continue
+      note "skipped (tool not installed / guard failed)"; continue
     fi
-
-    STATUS[i]="run"
-    STEP_T0[i]=$SECONDS
-    {
-      echo; echo "######## ${label} ########"
-      eval "$cmd"
-    } 2>&1 | tee -a "$LOG"
-    rc=${PIPESTATUS[0]}
-    STEP_SEC[i]=$(( SECONDS - ${STEP_T0[i]:-$SECONDS} ))
-    if [ "$rc" -ne 0 ]; then
-      STATUS[i]="fail"
-      note "failed (exit $rc)"
-    else
-      STATUS[i]="done"
-      note "done ($(fmt_time "${STEP_SEC[i]}"))"
-    fi
+    UT_STEP_LOG_DIR="${TMPDIR:-/tmp}/updatetools-steps-$$"
+    mkdir -p "$UT_STEP_LOG_DIR"
+    STEP_PID=(); CUR_PIDS=""
+    ut_spawn_step "$i"
+    # Stream the step log while the watchdog runs (plain wants live output).
+    local steplog="${UT_STEP_LOG_DIR}/$i.log" pid="${STEP_PID[i]}"
+    (
+      # Follow the per-step log until the worker exits.
+      tail -n +1 -f "$steplog" 2>/dev/null &
+      local tpid=$!
+      while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+      sleep 0.1
+      kill "$tpid" 2>/dev/null
+    ) &
+    local follow=$!
+    ut_watch_pid "$pid" "$steplog"
+    wait "$follow" 2>/dev/null
+    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED"
+    case "${STATUS[i]}" in
+      fail) note "failed (exit ${UT_WAIT_RC})" ;;
+      staged) note "staged — applies on exit ($(fmt_time "${STEP_SEC[i]}"))" ;;
+      *) note "done ($(fmt_time "${STEP_SEC[i]}"))" ;;
+    esac
   done
 
+  # Manual DMG apps: serial after Homebrew (brew catalogue reads), before the wave.
+  for ((i=0;i<TOTAL;i++)); do
+    [ "${STEP_KEY[i]}" = "applications" ] || continue
+    entry="${STEPS[i]}"; label="${entry%%¦*}"
+    section "$label"
+    if [ "${STEP_ON[i]}" != "1" ]; then
+      STATUS[i]="skip"; STEP_WHY[i]="off"; note "skipped (turned off)"; continue
+    fi
+    local guard="${entry#*¦}"; guard="${guard%%¦*}"
+    if ! eval "$guard" >/dev/null 2>&1; then
+      STATUS[i]="skip"; STEP_WHY[i]="guard"
+      note "skipped (tool not installed / guard failed)"; continue
+    fi
+    UT_STEP_LOG_DIR="${UT_STEP_LOG_DIR:-${TMPDIR:-/tmp}/updatetools-steps-$$}"
+    mkdir -p "$UT_STEP_LOG_DIR"
+    STEP_PID=(); CUR_PIDS=""
+    ut_spawn_step "$i"
+    local steplog="${UT_STEP_LOG_DIR}/$i.log" pid="${STEP_PID[i]}"
+    (
+      tail -n +1 -f "$steplog" 2>/dev/null &
+      local tpid=$!
+      while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+      sleep 0.1
+      kill "$tpid" 2>/dev/null
+    ) &
+    local follow=$!
+    ut_watch_pid "$pid" "$steplog"
+    wait "$follow" 2>/dev/null
+    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED"
+    case "${STATUS[i]}" in
+      fail) note "failed (exit ${UT_WAIT_RC})" ;;
+      staged) note "staged — applies on exit ($(fmt_time "${STEP_SEC[i]}"))" ;;
+      *) note "done ($(fmt_time "${STEP_SEC[i]}"))" ;;
+    esac
+  done
+
+  # Wave: start all independent steps, stream each log as it finishes.
+  section "CLI tools (parallel)"
+  UT_STEP_LOG_DIR="${UT_STEP_LOG_DIR:-${TMPDIR:-/tmp}/updatetools-steps-$$}"
+  mkdir -p "$UT_STEP_LOG_DIR"
+  STEP_PID=(); CUR_PIDS=""
+  local -a wave_idx=()
+  for ((i=0;i<TOTAL;i++)); do
+    ut_step_waveable "${STEP_KEY[i]}" || continue
+    entry="${STEPS[i]}"; label="${entry%%¦*}"
+    if [ "${STEP_ON[i]}" != "1" ]; then
+      STATUS[i]="skip"; STEP_WHY[i]="off"
+      note "$label: skipped (turned off)"
+      continue
+    fi
+    local guard="${entry#*¦}"; guard="${guard%%¦*}"
+    if ! eval "$guard" >/dev/null 2>&1; then
+      STATUS[i]="skip"; STEP_WHY[i]="guard"
+      note "$label: skipped (tool not installed / guard failed)"
+      continue
+    fi
+    wave_idx+=("$i")
+    note "start: $label"
+    ut_spawn_step "$i"
+  done
+  if [ "${#wave_idx[@]}" -gt 0 ]; then
+    # Reuse the same wave wait (stall watchdog per step log).
+    local any pid steplog size rc
+    local -a w_last_size=() w_last_change=()
+    for i in "${wave_idx[@]}"; do
+      steplog="${UT_STEP_LOG_DIR}/$i.log"
+      w_last_size[i]=$(wc -c < "$steplog" 2>/dev/null); w_last_size[i]=${w_last_size[i]// /}
+      w_last_change[i]=$SECONDS
+    done
+    while true; do
+      any=0
+      for i in "${wave_idx[@]}"; do
+        pid="${STEP_PID[i]:-}"
+        [ -n "$pid" ] || continue
+        steplog="${UT_STEP_LOG_DIR}/$i.log"
+        if kill -0 "$pid" 2>/dev/null; then
+          any=1
+          if [ "${STALL_TIMEOUT:-0}" -gt 0 ] 2>/dev/null; then
+            size=$(wc -c < "$steplog" 2>/dev/null); size=${size// /}
+            if [ "$size" != "${w_last_size[i]}" ]; then
+              w_last_size[i]=$size; w_last_change[i]=$SECONDS
+            elif [ $(( SECONDS - ${w_last_change[i]} )) -ge "$STALL_TIMEOUT" ]; then
+              kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+              echo "######## stalled ${STALL_TIMEOUT}s with no output — killed ########" >> "$steplog"
+              wait "$pid" 2>/dev/null
+              ut_finish_step "$i" 1 1
+              entry="${STEPS[i]}"; note "${entry%%¦*}: failed (stalled)"
+              continue
+            fi
+          fi
+        else
+          wait "$pid" 2>/dev/null; rc=$?
+          ut_finish_step "$i" "$rc" 0
+          # Print this step's output now that it finished.
+          [ -f "$steplog" ] && cat "$steplog"
+          entry="${STEPS[i]}"
+          case "${STATUS[i]}" in
+            fail) note "${entry%%¦*}: failed (exit $rc)" ;;
+            staged) note "${entry%%¦*}: staged — applies on exit ($(fmt_time "${STEP_SEC[i]}"))" ;;
+            *) note "${entry%%¦*}: done ($(fmt_time "${STEP_SEC[i]}"))" ;;
+          esac
+        fi
+      done
+      CUR_PIDS=""
+      for i in "${wave_idx[@]}"; do
+        [ -n "${STEP_PID[i]:-}" ] && CUR_PIDS="${CUR_PIDS:+$CUR_PIDS }${STEP_PID[i]}"
+      done
+      [ "$any" = "0" ] && break
+      sleep 0.4
+    done
+    CUR_PIDS=""
+  fi
+
+  # Serial post-wave brew-formula CLIs (supabase, vercel).
+  for ((i=0;i<TOTAL;i++)); do
+    ut_step_post_wave "${STEP_KEY[i]}" || continue
+    entry="${STEPS[i]}"; label="${entry%%¦*}"
+    section "$label"
+    if [ "${STEP_ON[i]}" != "1" ]; then
+      STATUS[i]="skip"; STEP_WHY[i]="off"; note "skipped (turned off)"; continue
+    fi
+    local guard="${entry#*¦}"; guard="${guard%%¦*}"
+    if ! eval "$guard" >/dev/null 2>&1; then
+      STATUS[i]="skip"; STEP_WHY[i]="guard"
+      note "skipped (tool not installed / guard failed)"; continue
+    fi
+    UT_STEP_LOG_DIR="${UT_STEP_LOG_DIR:-${TMPDIR:-/tmp}/updatetools-steps-$$}"
+    mkdir -p "$UT_STEP_LOG_DIR"
+    STEP_PID=(); CUR_PIDS=""
+    ut_spawn_step "$i"
+    local steplog="${UT_STEP_LOG_DIR}/$i.log" pid="${STEP_PID[i]}"
+    (
+      tail -n +1 -f "$steplog" 2>/dev/null &
+      local tpid=$!
+      while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+      sleep 0.1
+      kill "$tpid" 2>/dev/null
+    ) &
+    local follow=$!
+    ut_watch_pid "$pid" "$steplog"
+    wait "$follow" 2>/dev/null
+    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED"
+    case "${STATUS[i]}" in
+      fail) note "failed (exit ${UT_WAIT_RC})" ;;
+      staged) note "staged ($(fmt_time "${STEP_SEC[i]}"))" ;;
+      *) note "done ($(fmt_time "${STEP_SEC[i]}"))" ;;
+    esac
+  done
+
+  for ((i=0;i<TOTAL;i++)); do
+    [ "${STEP_KEY[i]}" = "report" ] || continue
+    entry="${STEPS[i]}"; label="${entry%%¦*}"
+    section "$label"
+    if [ "${STEP_ON[i]}" != "1" ]; then
+      STATUS[i]="skip"; STEP_WHY[i]="off"; note "skipped (turned off)"; continue
+    fi
+    UT_STEP_LOG_DIR="${UT_STEP_LOG_DIR:-${TMPDIR:-/tmp}/updatetools-steps-$$}"
+    mkdir -p "$UT_STEP_LOG_DIR"
+    STEP_PID=(); CUR_PIDS=""
+    ut_spawn_step "$i"
+    local steplog="${UT_STEP_LOG_DIR}/$i.log" pid="${STEP_PID[i]}"
+    (
+      tail -n +1 -f "$steplog" 2>/dev/null &
+      local tpid=$!
+      while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+      sleep 0.1
+      kill "$tpid" 2>/dev/null
+    ) &
+    local follow=$!
+    ut_watch_pid "$pid" "$steplog"
+    wait "$follow" 2>/dev/null
+    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED"
+    case "${STATUS[i]}" in
+      fail) note "failed (exit ${UT_WAIT_RC})" ;;
+      staged) note "staged ($(fmt_time "${STEP_SEC[i]}"))" ;;
+      *) note "done ($(fmt_time "${STEP_SEC[i]}"))" ;;
+    esac
+  done
+  rm -rf "${UT_STEP_LOG_DIR:-}" 2>/dev/null
+  UT_STEP_LOG_DIR=""
+
   section "Done"
-  done_n=0; skip_n=0; fail_n=0
   for ((i=0;i<TOTAL;i++)); do
     case "${STATUS[i]}" in
       done) done_n=$((done_n+1)) ;;
       skip) skip_n=$((skip_n+1)) ;;
       fail) fail_n=$((fail_n+1)) ;;
+      staged) staged_n=$((staged_n+1)) ;;
     esac
   done
-  note "$done_n done · $skip_n skipped · $fail_n failed · $(fmt_time $((SECONDS-T0))) elapsed"
+  note "$done_n done · $staged_n staged · $skip_n skipped · $fail_n failed · $(fmt_time $((SECONDS-T0))) elapsed"
   UT_RUN_FAILS=$fail_n
   ut_notify_end "$fail_n"
 }

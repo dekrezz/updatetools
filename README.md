@@ -39,21 +39,18 @@
 upgrades it. Every step is **guarded** — if a tool isn't installed, the step is
 skipped, so the same script is safe to run on any Mac.
 
-Covered today:
+Covered today (matches the script's step table):
 
 | Area | Tools |
 |------|-------|
-| Homebrew | `brew update`, formula & cask upgrades (greedy), autoremove, cleanup, `brew doctor` |
+| Homebrew | `brew update`, formula & cask upgrades (greedy), autoremove, cleanup |
 | Direct-download apps | Strictly matched drag-and-drop `.app` bundles from DMGs, staged without quitting running apps |
-| Node ecosystem | `npm` globals, `pnpm`, `yarn`, `bun`, `deno` |
-| Python | `pipx`, `uv` (self + tools), `conda` |
-| Rust | `rustup`, `cargo install-update` |
-| Ruby / PHP | system-`gem` aware, `composer` self + global |
-| Version managers | `mise`, `asdf`, `pyenv`, `rbenv`, `nodenv`, `fnm`, `volta`, `tfenv` |
-| Cloud / k8s | `gcloud`, `az`, `aws`, `helm`, `kubectl krew`, `flutter`, `dotnet` |
-| CLIs | Codex (custom npm prefix aware), Claude Code (`claude update`), Supabase, Vercel, `gh` extensions |
-| Editor / docs | VS Code extensions, `tldr` cache |
-| App Store / OS | `mas`, macOS software updates (opt-in) |
+| Node | `npm` globals, `pnpm` |
+| Python | `uv` (self + tools) |
+| Rust | `cargo install-update` |
+| CLIs | Supabase, Vercel, Claude Code (`claude update`), Codex (npm-only), Antigravity (`agy update`), `gh` extensions |
+| Editor | VS Code extensions |
+| Report | Version diff of what actually changed this run |
 
 Verbose output streams to a per-run log file; the dashboard only shows status.
 
@@ -103,8 +100,6 @@ updatetools                 # live dashboard in your browser (default)
 updatetools --plain         # plain scrolling text output, no browser
 updatetools --only homebrew,npm   # this run: only these steps
 updatetools --skip rust,astral    # this run: skip cargo + uv steps
-updatetools --macos         # ALSO install macOS + App Store updates (may reboot!)
-updatetools --plain --macos
 updatetools --no-greedy     # don't force-upgrade self-managing casks
 updatetools --no-manual-apps # skip apps installed manually from DMGs
 updatetools --version       # short revision of this copy
@@ -132,7 +127,6 @@ the `UPDATETOOLS_REV` stamp written by `--self-update` or the Homebrew formula.
 | `--only a,b` | This run only: enable these step keys (comma/space list). Does not rewrite the saved set unless you confirm Start in the dashboard. |
 | `--skip a,b` | This run only: disable these step keys. |
 | `--debug`, `--keep` | Keep the run log and write the HTML report to the Desktop. |
-| `--macos`, `--all` | Install macOS **and** Mac App Store updates. Off by default. |
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
 | `--no-close` | Never close running apps — stage every cask upgrade with `--no-quit`. |
 | `--no-manual-apps` | Skip discovery and safe staging of manually installed DMG apps. |
@@ -162,12 +156,14 @@ Step keys (stable slugs, same as the ribbon where possible):
 `supabase`, `vercel`, `claude`, `codex`, `antigravity`, `github` (gh), `vscode`,
 `report`.
 
+Homebrew runs alone first. Independent CLI steps then run as a parallel wave.
+The report step stays last.
+
 ### Environment toggles
 
 | Var | Same as |
 |-----|---------|
 | `PLAIN=1` | `--plain` |
-| `MACOS_UPDATES=1` | `--macos` |
 | `GREEDY=0` | `--no-greedy` |
 | `CLOSE_APPS=0` | `--no-close` |
 | `QUIET_APPS=0` | `--no-manual-apps` |
@@ -196,7 +192,8 @@ that everything is already up to date.
 If the app is open, the verified bundle is staged beside it and a detached
 one-shot helper waits for the user to close it naturally. The helper then uses
 an APFS atomic directory swap and removes itself. It never sends Quit events,
-relaunches applications, controls windows, or moves the pointer.
+relaunches applications, controls windows, or moves the pointer. That case is
+reported as **staged** (not done) until the swap applies.
 
 ## Deciding which apps to close
 
@@ -228,6 +225,8 @@ in practice it only fires for scriptable apps with a clean document model, or fo
 apps you explicitly force with **`UPDATETOOLS_CLOSE`**. Nothing is ever
 force-killed: if a graceful quit doesn't complete (e.g. a save dialog appears),
 the cask falls back to staging. Pass `--no-close` to disable closing entirely.
+Protected / deferred updates show as **staged** in the step status, not as a
+successful update of the running process.
 
 ## The report
 
@@ -235,16 +234,9 @@ Every run diffs versions from before and after, and shows what actually changed
 — with each tool's logo (bundled [Simple Icons](https://simpleicons.org), CC0,
 falling back to the project's own site icon, cached under
 `~/.cache/updatetools/icons`) and the vendor's spelling from Homebrew's metadata,
-so it reads `ChatGPT`, not `chatgpt`. `--debug` also writes it to the Desktop as
-a self-contained HTML file.
-
-
-## Why macOS updates are opt-in
-
-`sudo softwareupdate -ia` can **reboot your machine mid-work** without warning, so
-OS and App Store updates are never installed by default. A normal run only *lists*
-available macOS updates; pass `--macos` (or `MACOS_UPDATES=1`) to actually install
-them.
+so it reads `ChatGPT`, not `chatgpt`. Staged cask upgrades (running process still
+on the old build) are omitted from that “updated” list. `--debug` also writes the
+report to the Desktop as a self-contained HTML file.
 
 ## The dashboard
 
@@ -255,7 +247,8 @@ per-step durations and the version diff at the end; hovering a step opens that
 step's output. Passwords are asked for **in the page** — nothing is echoed as
 you type — and the answer goes straight to `sudo`. If the keyboard is not the
 language that password was accepted in (English until one succeeds), the reveal
-control closes and the sheet says which language is on instead.
+control closes and the sheet says which language is on instead. If a required
+password is rejected, the run aborts before any step starts.
 
 Access is locked down: loopback only, a random per-run token exchanged for an
 `HttpOnly` cookie (everything else is `403`), a `Host` check against DNS
@@ -273,10 +266,6 @@ Pass `--debug` to keep the log and report.
 - **Codex CLI** is detected by resolving its binary symlink, so it updates
   correctly even when installed into a non-default npm prefix (e.g. an iCloud
   `~/.local`). The `codex-app` desktop cask is upgraded separately.
-- **System Ruby** (`/usr/bin/gem`) is SIP-protected and intentionally skipped —
-  use a Homebrew/`rbenv` Ruby if you want gems managed.
-- **Homebrew Python** is externally managed, so global `pip` upgrades are skipped
-  on purpose; use `pipx`/`uv` for tools.
 - A UTF-8 locale is forced internally so the dashboard always aligns.
 - The report needs `jq` (ships with macOS) for vendor names and site icons;
   without it, names fall back to the package token and logos to a monogram.

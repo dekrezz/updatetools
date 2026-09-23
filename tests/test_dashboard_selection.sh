@@ -90,7 +90,7 @@ assertEq(
 );
 assertEq(
   'run counts only selected',
-  { total: 3, done: 2, skip: 1, fail: 0 },
+  { total: 3, done: 2, skip: 1, fail: 0, staged: 0 },
   selectedCounts(steps, 'run', null)
 );
 
@@ -112,7 +112,7 @@ assertEq(
 );
 assertEq(
   'only-homebrew counts 1 of 1',
-  { total: 1, done: 0, skip: 0, fail: 0 },
+  { total: 1, done: 0, skip: 0, fail: 0, staged: 0 },
   selectedCounts(onlyBrew, 'run', null)
 );
 
