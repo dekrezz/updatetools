@@ -59,6 +59,22 @@ Verbose output streams to a per-run log file; the dashboard only shows status.
 
 ## Install
 
+### Homebrew (recommended)
+
+This repo is a Homebrew tap (`Formula/updatetools.rb`). There is no release tag
+yet, so the formula is **head-only** (tracks `main` via git — no rotting
+`sha256`):
+
+```bash
+brew tap dekrezz/updatetools https://github.com/dekrezz/updatetools
+brew install --HEAD updatetools
+```
+
+(`brew tap user/repo` without a URL expects a `homebrew-updatetools` repo; the
+explicit URL is required for this project name.)
+
+### From git
+
 ```bash
 git clone https://github.com/dekrezz/updatetools.git
 cd updatetools
@@ -67,6 +83,14 @@ mkdir -p ~/.local/bin
 install -m 755 updatetools ~/.local/bin/
 # make sure ~/.local/bin is on your PATH in ~/.zshrc:
 #   export PATH="$HOME/.local/bin:$PATH"
+```
+
+Update an installed copy in place (downloads `main` from GitHub and replaces
+the running script atomically):
+
+```bash
+updatetools --self-update
+updatetools --version   # short git revision (see below)
 ```
 
 > One file, nothing else to copy: the dashboard, the plain run, the cask
@@ -83,12 +107,18 @@ updatetools --macos         # ALSO install macOS + App Store updates (may reboot
 updatetools --plain --macos
 updatetools --no-greedy     # don't force-upgrade self-managing casks
 updatetools --no-manual-apps # skip apps installed manually from DMGs
+updatetools --version       # short revision of this copy
+updatetools --self-update   # replace this script with main from GitHub
 updatetools --help
 ```
 
 The **dashboard is the default** on an interactive terminal. When stdout isn't a
 TTY (pipes, cron, CI) it automatically uses plain text — so scripting it is safe
 without any flag.
+
+`--version` prints a short revision string (not a semver — none is defined yet).
+From a git checkout of this repo it uses `git describe`; installed copies use
+the `UPDATETOOLS_REV` stamp written by `--self-update` or the Homebrew formula.
 
 ### Flags
 
@@ -103,6 +133,8 @@ without any flag.
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
 | `--no-close` | Never close running apps — stage every cask upgrade with `--no-quit`. |
 | `--no-manual-apps` | Skip discovery and safe staging of manually installed DMG apps. |
+| `--version` | Print the short revision of this copy. |
+| `--self-update` | Replace the running script with `main` from GitHub. |
 
 ### Which steps run
 
