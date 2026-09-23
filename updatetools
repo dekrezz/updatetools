@@ -14,9 +14,9 @@
 # limitations under the License.
 #
 # UPDATETOOLS_REV=a281b33
-# Short git revision stamped into installed copies by --self-update and the
-# Homebrew formula. --version prefers `git describe` when this file is run from
-# a checkout of the updatetools repo; otherwise it prints this stamp.
+# Revision or release tag stamped into installed copies by --self-update and
+# the Homebrew formula. --version prefers `git describe` when this file is run
+# from a checkout of the updatetools repo; otherwise it prints this stamp.
 #
 # updatetools — update everything updatable on this Mac.
 #
@@ -34,7 +34,7 @@
 #   updatetools --no-manual-apps # skip safe updates for apps installed from DMGs
 #   updatetools --debug         # keep the run's log and write the HTML report to
 #                               # the Desktop (both are temporary otherwise)
-#   updatetools --version       # print the short revision of this copy
+#   updatetools --version       # print the version of this copy
 #   updatetools --self-update   # replace this script with main from GitHub
 #   updatetools --schedule [interval]  # install a LaunchAgent (default every 24h)
 #   updatetools --unschedule    # remove the LaunchAgent

@@ -58,13 +58,14 @@ Verbose output streams to a per-run log file; the dashboard only shows status.
 
 ### Homebrew (recommended)
 
-This repo is a Homebrew tap (`Formula/updatetools.rb`). There is no release tag
-yet, so the formula is **head-only** (tracks `main` via git — no rotting
-`sha256`):
+This repo is a Homebrew tap (`Formula/updatetools.rb`). The stable formula pins
+release [`2026.09.23`](https://github.com/dekrezz/updatetools/releases/tag/2026.09.23).
+`--HEAD` tracks `main` via git.
 
 ```bash
 brew tap dekrezz/updatetools https://github.com/dekrezz/updatetools
-brew install --HEAD updatetools
+brew install updatetools
+brew install --HEAD updatetools   # track main
 ```
 
 (`brew tap user/repo` without a URL expects a `homebrew-updatetools` repo; the
@@ -87,7 +88,7 @@ the running script atomically):
 
 ```bash
 updatetools --self-update
-updatetools --version   # short git revision (see below)
+updatetools --version   # release tag, or git describe in a checkout (see below)
 ```
 
 > One file, nothing else to copy: the dashboard, the plain run, the cask
@@ -102,7 +103,7 @@ updatetools --only homebrew,npm   # this run: only these steps
 updatetools --skip rust,astral    # this run: skip cargo + uv steps
 updatetools --no-greedy     # don't force-upgrade self-managing casks
 updatetools --no-manual-apps # skip apps installed manually from DMGs
-updatetools --version       # short revision of this copy
+updatetools --version       # release tag, or git describe in a checkout
 updatetools --self-update   # replace this script with main from GitHub
 updatetools --schedule      # LaunchAgent: run --plain every 24h
 updatetools --schedule 12h  # every 12 hours (also: seconds, 30m, 1d, 1w, or HH:MM)
@@ -114,9 +115,11 @@ The **dashboard is the default** on an interactive terminal. When stdout isn't a
 TTY (pipes, cron, CI) it automatically uses plain text — so scripting it is safe
 without any flag.
 
-`--version` prints a short revision string (not a semver — none is defined yet).
-From a git checkout of this repo it uses `git describe`; installed copies use
-the `UPDATETOOLS_REV` stamp written by `--self-update` or the Homebrew formula.
+`--version` prints the release tag for a copy installed from one (`2026.09.23`),
+or `git describe` when run from a checkout of this repo. Other installed copies
+use the `UPDATETOOLS_REV` stamp written by `--self-update` or the Homebrew
+formula. `--self-update` still replaces the script with `main`, not with the
+latest tag.
 
 ### Flags
 
@@ -130,7 +133,7 @@ the `UPDATETOOLS_REV` stamp written by `--self-update` or the Homebrew formula.
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
 | `--no-close` | Never close running apps — stage every cask upgrade with `--no-quit`. |
 | `--no-manual-apps` | Skip discovery and safe staging of manually installed DMG apps. |
-| `--version` | Print the short revision of this copy. |
+| `--version` | Print the release tag, or `git describe` from a checkout. |
 | `--self-update` | Replace the running script with `main` from GitHub. |
 | `--schedule [interval]` | Install a per-user LaunchAgent (`com.dekrezz.updatetools`) that runs `updatetools --plain`. Default interval: 24h. Replaces an existing agent. Interval: bare seconds, `30m` / `12h` / `1d` / `1w`, or `HH:MM` for a daily wall-clock time. Does not run an update at install time. |
 | `--unschedule` | Boot out and delete that LaunchAgent. |
