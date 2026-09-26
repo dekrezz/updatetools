@@ -217,6 +217,7 @@ acts per verdict:
 | **close** | app running **and provably safe to quit** | graceful quit → upgrade → relaunch |
 | **protect** | app running but unsafe to close | stage with `--no-quit`; applies on next launch |
 | **skip (manual)** | needs an interactive sudo password (`BREW_CASK_SKIP`) | reported, not touched |
+| **broken** | app missing from `/Applications` and an interrupted upgrade left its backup in the Caskroom (every `brew upgrade` fails) | `brew reinstall --cask` |
 
 An app is **protected** (never closed) when it is any of:
 

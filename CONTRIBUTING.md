@@ -22,6 +22,7 @@ a pull request without requesting permission.
    ```bash
    bash -n updatetools
    bash tests/test_manual_apps.sh
+   bash tests/test_broken_installs.sh
    ```
 
 6. Open a pull request with a clear description of the problem, the solution,

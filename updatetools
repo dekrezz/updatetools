@@ -558,7 +558,9 @@ relaunch_app() { # $1 = bundle id
 # controlling_terminal_bundleid, has_unsaved (+ osa_t), in_list.
 #
 # Precedence (highest first):
-#   0.  unresolvable to an installed app (font / CLI-only cask / missing) -> skip
+#   0.  app artifact, not installed, stale backup left in the Caskroom by an
+#       interrupted upgrade (every `brew upgrade` now fails on it)         -> broken
+#   0a. unresolvable to an installed app (font / CLI-only cask / missing) -> skip
 #   0b. resolvable but NOT running                                         -> upgrade
 #   b.  bundle id == the terminal hosting THIS shell -> protect  (INVIOLABLE:
 #       checked before the force-close list, so nothing can quit our terminal)
@@ -600,12 +602,26 @@ is_risky_token() { # $1 = cask token
 # never misclassify our own terminal because of a transient ps read.
 UT_TERM_BID="$(controlling_terminal_bundleid 2>/dev/null)"
 
-classify_cask() { # $1 = cask token -> echoes skip|close|protect
+# An interrupted cask upgrade can leave the old .app backed up inside the
+# Caskroom version dir while /Applications has none. Brew then refuses every
+# upgrade ("It seems there is already an App at ..."); only reinstall repairs it.
+cask_has_stale_backup() { # $1 = cask token, $2 = ".app" name
+  local d
+  for d in "$(brew --caskroom)/$1"/*/"$2"; do
+    [ -d "$d" ] && return 0
+  done
+  return 1
+}
+
+classify_cask() { # $1 = cask token -> echoes broken|skip|upgrade|close|protect
   local token="$1" app bid
   app="$(cask_to_apps "$token" | head -n1)"
-  [ -n "$app" ] || { echo skip; return; }          # 0. no app artifact -> skip
+  [ -n "$app" ] || { echo skip; return; }          # 0a. no app artifact -> skip
   bid="$(app_to_bundleid "$app")"
-  [ -n "$bid" ] || { echo skip; return; }          # 0. installed app not found -> skip
+  if [ -z "$bid" ]; then
+    cask_has_stale_backup "$token" "$app" && { echo broken; return; }  # 0. interrupted upgrade
+    echo skip; return                              # 0a. installed app not found -> skip
+  fi
 
   is_running "$bid" || { echo upgrade;  return; }    # 0b. not running -> handled elsewhere
 
@@ -703,6 +719,7 @@ ut_changelog_lookup() {
 # ===========================================================================
 # Replaces the old blanket `brew upgrade --cask --no-quit`. For every OUTDATED
 # cask it asks classify_cask() what to do, then acts per verdict:
+#   broken   — app missing and a stale backup blocks upgrades: reinstall.
 #   skip     — cask ships no .app (font / CLI-only): upgrade in place.
 #   upgrade  — app installed but not running: upgrade in place (nobody using it).
 #   protect  — app running but unsafe to close (terminal / unsaved / risky /
@@ -782,6 +799,14 @@ ut_upgrade_casks_smart() {
       upgrade)
         echo ">> $token: not running — upgrading in place"
         if brew upgrade --cask --no-quit "$token"; then
+          n_up=$((n_up+1))
+        else
+          rc=1
+        fi
+        ;;
+      broken)
+        echo ">> $token: app missing and a stale backup in the Caskroom blocks upgrades — reinstalling"
+        if brew reinstall --cask "$token"; then
           n_up=$((n_up+1))
         else
           rc=1
@@ -4223,28 +4248,57 @@ codex_update_npm_only() {
   fi
 }
 
+# pnpm 12 puts global binaries in $PNPM_HOME/bin (default ~/Library/pnpm) and
+# refuses every global command while that dir is not on PATH. It offers no
+# command that prints the dir without that check (`pnpm config get
+# global-bin-dir` prints the literal "undefined"), so derive it the same way.
+ut_pnpm_global_bin_dir() {
+  printf '%s/bin\n' "${PNPM_HOME:-$HOME/Library/pnpm}"
+}
+
+# True when the pnpm on PATH is the Homebrew formula's binary. Compare files,
+# not path prefixes: npm -g also installs into /usr/local/bin on Intel Macs.
+ut_pnpm_is_brew_managed() {
+  local bin prefix
+  have brew || return 1
+  bin="$(command -v pnpm)" || return 1
+  prefix="$(brew --prefix pnpm 2>/dev/null)" || return 1
+  [ -n "$prefix" ] && [ "$bin" -ef "$prefix/bin/pnpm" ]
+}
+
 pnpm_update_global() {
   local rc=0 self_rc=0
-  # Prefer pnpm's own updater; fall back to the Homebrew formula when present.
-  # A failed self-update with no brew formula is a real failure — do not drop it.
-  # Keep stderr in the step log when this failure is what sets rc.
-  pnpm self-update; self_rc=$?
-  if [ "$self_rc" -ne 0 ]; then
-    if have brew && brew list pnpm >/dev/null 2>&1; then
-      if ut_brew_cli_lock; then
-        brew upgrade pnpm || rc=$?
-        ut_brew_cli_unlock
-      else
-        rc=1
-      fi
+  if ut_pnpm_is_brew_managed; then
+    # `pnpm self-update` would not touch the brew binary: it installs a second
+    # pnpm as a global package that nothing on PATH ever runs.
+    if ut_brew_cli_lock; then
+      brew upgrade pnpm || rc=$?
+      ut_brew_cli_unlock
     else
-      rc=$self_rc
+      rc=1
+    fi
+  else
+    # Prefer pnpm's own updater; fall back to the Homebrew formula when present.
+    # A failed self-update with no brew formula is a real failure — do not drop it.
+    # Keep stderr in the step log when this failure is what sets rc.
+    pnpm self-update; self_rc=$?
+    if [ "$self_rc" -ne 0 ]; then
+      if have brew && brew list pnpm >/dev/null 2>&1; then
+        if ut_brew_cli_lock; then
+          brew upgrade pnpm || rc=$?
+          ut_brew_cli_unlock
+        else
+          rc=1
+        fi
+      else
+        rc=$self_rc
+      fi
     fi
   fi
   # pnpm's global bin dir may not be in PATH when launched non-interactively.
   local pnpm_bin
-  pnpm_bin="$(pnpm config get global-bin-dir 2>/dev/null)"
-  [ -n "$pnpm_bin" ] && export PATH="$PATH:$pnpm_bin"
+  pnpm_bin="$(ut_pnpm_global_bin_dir)"
+  case ":$PATH:" in *":$pnpm_bin:"*) ;; *) export PATH="$PATH:$pnpm_bin" ;; esac
   pnpm update -g --latest || rc=$?
   return "$rc"
 }
