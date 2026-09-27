@@ -36,7 +36,7 @@
 #   updatetools --debug         # keep the run's log and write the HTML report to
 #                               # the Desktop (both are temporary otherwise)
 #   updatetools --version       # print the version of this copy
-#   updatetools --self-update   # replace this script with main from GitHub
+#   updatetools --self-update   # install the latest release (sha256-checked)
 #   updatetools --schedule [interval]  # install a LaunchAgent (default every 24h)
 #   updatetools --unschedule    # remove the LaunchAgent
 #   updatetools --no-notify     # never show a desktop notification at end of run
@@ -81,8 +81,7 @@ UT_RUN_FAILS=0
 
 UT_LAUNCH_LABEL="com.dekrezz.updatetools"
 
-UPDATETOOLS_RAW_URL="https://raw.githubusercontent.com/dekrezz/updatetools/main/updatetools"
-UPDATETOOLS_GIT_URL="https://github.com/dekrezz/updatetools.git"
+UPDATETOOLS_FORMULA_URL="https://raw.githubusercontent.com/dekrezz/updatetools/main/Formula/updatetools.rb"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -155,9 +154,11 @@ updatetools_print_version() {
   printf 'updatetools %s\n' "$stamp"
 }
 
-# Replace the executing file with main from GitHub (atomic, no sudo).
+# Replace the executing file with the release the Homebrew formula on main pins
+# (atomic, no sudo). The tag tarball must match the formula's sha256 — the same
+# check `brew install` does — so a push to main alone never reaches installs.
 updatetools_self_update() {
-  local self dir tmp stamped rev first
+  local self dir tmp stamped rev first work formula url sha got src
   self=$(updatetools_resolve_self) || return 1
   dir=$(dirname "$self")
 
@@ -165,33 +166,54 @@ updatetools_self_update() {
     echo "error: curl is required for --self-update" >&2
     return 1
   fi
-  if ! have git; then
-    echo "error: git is required for --self-update (to resolve main revision)" >&2
-    return 1
-  fi
 
-  rev=$(git ls-remote "$UPDATETOOLS_GIT_URL" refs/heads/main 2>/dev/null | awk '{print $1}')
-  if [ -z "$rev" ] || [ "${#rev}" -lt 7 ]; then
-    echo "error: could not resolve main revision from $UPDATETOOLS_GIT_URL" >&2
+  work=$(mktemp -d "${TMPDIR:-/tmp}/updatetools-selfupdate.XXXXXX") || {
+    echo "error: cannot create a temp dir for --self-update" >&2
     return 1
-  fi
-  rev=$(printf '%s' "$rev" | cut -c1-7)
-
+  }
   tmp=$(mktemp "$dir/updatetools.XXXXXX") || {
     echo "error: cannot create temp file in $dir" >&2
+    rm -rf "$work"
     return 1
   }
   # shellcheck disable=SC2064
-  trap "rm -f '$tmp'" EXIT
+  trap "rm -rf '$work' '$tmp'" EXIT
 
-  if ! curl -fsSL "$UPDATETOOLS_RAW_URL" -o "$tmp"; then
-    echo "error: failed to download $UPDATETOOLS_RAW_URL" >&2
+  formula="$work/updatetools.rb"
+  if ! curl -fsSL "$UPDATETOOLS_FORMULA_URL" -o "$formula"; then
+    echo "error: failed to download $UPDATETOOLS_FORMULA_URL" >&2
     return 1
   fi
-  if [ ! -s "$tmp" ]; then
-    echo "error: download is empty; leaving $self unchanged" >&2
+  url=$(sed -n 's/^[[:space:]]*url "\(https:[^"]*\/archive\/refs\/tags\/[^"]*\.tar\.gz\)".*/\1/p' "$formula" | sed -n '1p')
+  sha=$(sed -n 's/^[[:space:]]*sha256 "\([0-9a-f]\{64\}\)".*/\1/p' "$formula" | sed -n '1p')
+  if [ -z "$url" ] || [ -z "$sha" ]; then
+    echo "error: the formula does not pin a release url and sha256; leaving $self unchanged" >&2
     return 1
   fi
+  rev="${url##*/}"; rev="${rev%.tar.gz}"
+
+  if ! curl -fsSL "$url" -o "$work/release.tar.gz"; then
+    echo "error: failed to download $url" >&2
+    return 1
+  fi
+  got=$(shasum -a 256 "$work/release.tar.gz" | awk '{print $1}')
+  if [ "$got" != "$sha" ]; then
+    echo "error: sha256 mismatch for $url (expected $sha, got $got); leaving $self unchanged" >&2
+    return 1
+  fi
+  mkdir "$work/x" && tar -xzf "$work/release.tar.gz" -C "$work/x" || {
+    echo "error: cannot unpack $url; leaving $self unchanged" >&2
+    return 1
+  }
+  src=$(find "$work/x" -mindepth 2 -maxdepth 2 -type f -name updatetools | sed -n '1p')
+  if [ -z "$src" ] || [ ! -s "$src" ]; then
+    echo "error: release $rev has no updatetools script; leaving $self unchanged" >&2
+    return 1
+  fi
+  cp "$src" "$tmp" || {
+    echo "error: cannot copy release $rev into $dir" >&2
+    return 1
+  }
   first=$(sed -n '1p' "$tmp")
   if [ "$first" != '#!/usr/bin/env bash' ]; then
     echo "error: download does not start with #!/usr/bin/env bash; leaving $self unchanged" >&2
@@ -207,7 +229,7 @@ updatetools_self_update() {
     return 1
   }
   # shellcheck disable=SC2064
-  trap "rm -f '$tmp' '$stamped'" EXIT
+  trap "rm -rf '$work' '$tmp' '$stamped'" EXIT
 
   if grep -q '^# UPDATETOOLS_REV=' "$tmp"; then
     sed "s/^# UPDATETOOLS_REV=.*/# UPDATETOOLS_REV=$rev/" "$tmp" >"$stamped" || {
@@ -234,9 +256,9 @@ updatetools_self_update() {
     echo "error: atomic replace of $self failed" >&2
     return 1
   }
-  rm -f "$tmp"
+  rm -rf "$tmp" "$work"
   trap - EXIT
-  printf 'Updated %s to %s\n' "$self" "$rev"
+  printf 'Updated %s to release %s\n' "$self" "$rev"
 }
 
 # Index-based parser so valued options (--only/--skip/schedule interval) never
@@ -4645,8 +4667,9 @@ ut_status_from_rc() {
 # Steps whose primary path is `brew upgrade <formula>` stay serial after the
 # wave so two brew operations never overlap.
 ut_step_waveable() {
+  ut_step_privileged "${1:-}" && return 1
   case "${1:-}" in
-    homebrew|applications|report|supabase|vercel) return 1 ;;
+    report|supabase|vercel) return 1 ;;
     *) return 0 ;;
   esac
 }
@@ -4681,6 +4704,40 @@ ut_require_sudo() {
   fi
   echo "error: sudo password required but no TTY — aborting before steps." >&2
   return 1
+}
+
+# Steps that may need root: Homebrew (pkg casks), DMG app swaps, mas, and
+# softwareupdate. They run first, while sudo is cached; everything else runs
+# after ut_drop_sudo, so package install scripts never inherit root.
+UT_PRIVILEGED_KEYS="homebrew applications appstore macos"
+ut_step_privileged() {
+  case " $UT_PRIVILEGED_KEYS " in *" ${1:-} "*) return 0 ;; esac
+  return 1
+}
+
+# True when an enabled privileged step will actually run (its guard passes).
+ut_needs_sudo() {
+  local i guard
+  for ((i=0;i<TOTAL;i++)); do
+    [ "${STEP_ON[i]}" = "1" ] || continue
+    ut_step_privileged "${STEP_KEY[i]}" || continue
+    guard="${STEPS[i]#*¦}"; guard="${guard%%¦*}"
+    eval "$guard" >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
+# End of the privileged phase: stop refreshing, invalidate this session's sudo
+# timestamp, and forget the dashboard password so a later askpass request is
+# shown to the user instead of being answered automatically.
+ut_drop_sudo() {
+  if [ -n "${SUDO_KEEPER:-}" ]; then
+    kill "$SUDO_KEEPER" 2>/dev/null
+    wait "$SUDO_KEEPER" 2>/dev/null
+    SUDO_KEEPER=""
+  fi
+  sudo -k 2>/dev/null
+  SUDO_PW=""
 }
 
 # Append a per-step log into the shared run log (used by the dashboard slicer).
@@ -4899,11 +4956,16 @@ ut_run_steps() {
     ut_run_step_serial "$i"
   done
 
-  # Manual DMG apps use brew list/info — serial after Homebrew, before the wave.
-  for ((i=0;i<TOTAL;i++)); do
-    [ "${STEP_KEY[i]}" = "applications" ] || continue
-    ut_run_step_serial "$i"
+  # The rest of the privileged phase, serial: manual DMG apps (brew catalogue
+  # reads), App Store, macOS.
+  local key
+  for key in applications appstore macos; do
+    for ((i=0;i<TOTAL;i++)); do
+      [ "${STEP_KEY[i]}" = "$key" ] || continue
+      ut_run_step_serial "$i"
+    done
   done
+  ut_drop_sudo
 
   ut_run_wave
 
@@ -5015,17 +5077,21 @@ export GIT_TERMINAL_PROMPT=0
   ut_save_enabled
   rm -f "$WEB_DIR/start"
 
-  if ! ut_require_sudo web; then
-    UT_WEB_ERROR="sudo password required but not accepted — aborting before steps."
-    ut_web_state error
-    wait "$WEB_PID" 2>/dev/null
-    ut_web_stop
-    return 1
+  # sudo only when a step that needs it will run; ut_run_steps drops it again
+  # before the package-manager steps start.
+  if ut_needs_sudo; then
+    if ! ut_require_sudo web; then
+      UT_WEB_ERROR="sudo password required but not accepted — aborting before steps."
+      ut_web_state error
+      wait "$WEB_PID" 2>/dev/null
+      ut_web_stop
+      return 1
+    fi
+    ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
+    SUDO_KEEPER=$!
   fi
   # Password time is not part of the run. The clock starts when tools start.
   T0=$SECONDS
-  ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
-  SUDO_KEEPER=$!
 
   # Before any step, including when Homebrew itself is turned off.
   ut_report_capture_cli
@@ -5084,8 +5150,10 @@ run_plain() {
   note "steps: $(ut_all_step_keys)"
   note "enabled file: $(ut_enabled_file)"
 
-  if ! ut_require_sudo plain; then
-    return 1
+  if ut_needs_sudo; then
+    ut_require_sudo plain || return 1
+    ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
+    SUDO_KEEPER=$!
   fi
   T0=$SECONDS
 
@@ -5131,9 +5199,12 @@ run_plain() {
     esac
   done
 
-  # Manual DMG apps: serial after Homebrew (brew catalogue reads), before the wave.
+  # Rest of the privileged phase, serial after Homebrew: manual DMG apps (brew
+  # catalogue reads), App Store, macOS. sudo is dropped before the wave.
+  local key
+  for key in applications appstore macos; do
   for ((i=0;i<TOTAL;i++)); do
-    [ "${STEP_KEY[i]}" = "applications" ] || continue
+    [ "${STEP_KEY[i]}" = "$key" ] || continue
     entry="${STEPS[i]}"; label="${entry%%¦*}"
     section "$label"
     if [ "${STEP_ON[i]}" != "1" ]; then
@@ -5166,6 +5237,8 @@ run_plain() {
       *) note "done ($(fmt_time "${STEP_SEC[i]}"))" ;;
     esac
   done
+  done
+  ut_drop_sudo
 
   # Wave: start all independent steps, stream each log as it finishes.
   section "CLI tools (parallel)"
