@@ -49,6 +49,7 @@ Tools you don't have are skipped. At the end you see exactly what changed.
 
 - **Never interrupts your work.** Apps that are open or have unsaved changes get the update on next launch.
 - **Never restarts your Mac.** Updates that need a restart are listed, not installed.
+- **Root only where needed.** sudo is dropped before npm, cargo, uv and other package updates run. [Details](SECURITY.md#what-updatetools-does-on-your-mac)
 - **Nothing to clean up.** Logs and the report are temporary unless you pass `--debug`.
 
 ## Common options

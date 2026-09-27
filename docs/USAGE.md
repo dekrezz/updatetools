@@ -59,8 +59,9 @@ install -m 755 updatetools ~/.local/bin/
 #   export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Update an installed copy in place (downloads `main` from GitHub and replaces
-the running script atomically):
+Update an installed copy in place. It installs the release that the Homebrew
+formula pins, only if the tarball matches the formula's sha256, and replaces
+the running script atomically:
 
 ```bash
 updatetools --self-update
@@ -80,7 +81,7 @@ updatetools --skip rust,astral    # this run: skip cargo + uv steps
 updatetools --no-greedy     # don't force-upgrade self-managing casks
 updatetools --no-manual-apps # skip apps installed manually from DMGs
 updatetools --version       # release tag, or git describe in a checkout
-updatetools --self-update   # replace this script with main from GitHub
+updatetools --self-update   # install the latest release (sha256-checked)
 updatetools --schedule      # LaunchAgent: run --plain every 24h
 updatetools --schedule 12h  # every 12 hours (also: seconds, 30m, 1d, 1w, or HH:MM)
 updatetools --unschedule    # remove the LaunchAgent
@@ -94,8 +95,7 @@ without any flag.
 `--version` prints the release tag for a copy installed from one (`2026.09.23`),
 or `git describe` when run from a checkout of this repo. Other installed copies
 use the `UPDATETOOLS_REV` stamp written by `--self-update` or the Homebrew
-formula. `--self-update` still replaces the script with `main`, not with the
-latest tag.
+formula. `--self-update` stamps the release tag it installed.
 
 ### Flags
 
@@ -110,7 +110,7 @@ latest tag.
 | `--no-close` | Never close running apps — stage every cask upgrade with `--no-quit`. |
 | `--no-manual-apps` | Skip discovery and safe staging of manually installed DMG apps. |
 | `--version` | Print the release tag, or `git describe` from a checkout. |
-| `--self-update` | Replace the running script with `main` from GitHub. |
+| `--self-update` | Replace the running script with the release pinned by `Formula/updatetools.rb`, verified against its sha256. Unreleased commits on `main` are never installed. |
 | `--schedule [interval]` | Install a per-user LaunchAgent (`com.dekrezz.updatetools`) that runs `updatetools --plain`. Default interval: 24h. Replaces an existing agent. Interval: bare seconds, `30m` / `12h` / `1d` / `1w`, or `HH:MM` for a daily wall-clock time. Does not run an update at install time. |
 | `--unschedule` | Boot out and delete that LaunchAgent. |
 | `--no-notify` | Never show a desktop notification when a run ends. |
@@ -135,8 +135,10 @@ Step keys (stable slugs, same as the ribbon where possible):
 `supabase`, `vercel`, `claude`, `codex`, `antigravity`, `github` (gh), `vscode`,
 `report`.
 
-Homebrew runs alone first. Independent steps (App Store, macOS, CLIs) then run
-as a parallel wave.
+Steps that may need `sudo` run first, one at a time: Homebrew, DMG apps,
+App Store, macOS. Then sudo is dropped (`sudo -k`, and the dashboard forgets the
+password), and the package-manager and CLI steps run as a parallel wave.
+The password is asked for only if one of those privileged steps is enabled.
 The report step stays last.
 
 ### Environment toggles

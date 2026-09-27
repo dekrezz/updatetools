@@ -24,6 +24,8 @@ a pull request without requesting permission.
    bash tests/test_manual_apps.sh
    bash tests/test_broken_installs.sh
    bash tests/test_system_updates.sh
+   bash tests/test_sudo_scope.sh
+   bash tests/test_self_update.sh
    ```
 
 6. Open a pull request with a clear description of the problem, the solution,
