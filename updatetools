@@ -18,7 +18,8 @@
 # the Homebrew formula. --version prefers `git describe` when this file is run
 # from a checkout of the updatetools repo; otherwise it prints this stamp.
 #
-# updatetools — update everything updatable on this Mac.
+# updatetools — update everything on your Mac: macOS, App Store apps,
+# Homebrew, apps from DMGs and developer tools.
 #
 # The run has no terminal UI: it serves a live dashboard on 127.0.0.1 and opens
 # it in your browser. One file, no companion scripts; deferred app updates clean
@@ -27,7 +28,7 @@
 # Usage:
 #   updatetools                 # opens a live dashboard in your browser
 #   updatetools --plain         # plain scrolling text output, no browser
-#   updatetools --only a,b      # this run: only these step keys (see README)
+#   updatetools --only a,b      # this run: only these step keys (see docs/USAGE.md)
 #   updatetools --skip a,b      # this run: skip these step keys
 #   updatetools --no-greedy     # don't force-upgrade casks that self-manage
 #   updatetools --no-close      # never close running apps (stage all cask upgrades)
@@ -1588,6 +1589,8 @@ ut_icon_site() {
 ut_step_key() {
   local label="${1-}" name slug
   name="${label%% · *}"
+  # The icon slug for macOS is the Apple logo; the step key stays "macos".
+  case "$name" in macOS) echo macos; return 0 ;; esac
   slug="$(ut_icon_slug "$name")"
   if [ -n "$slug" ]; then
     printf '%s\n' "$slug"
@@ -4432,6 +4435,90 @@ vscode_update_exts() {
   return "$rc"
 }
 
+# Bundle id of an installed App Store app, by its App Store (Adam) id.
+ut_appstore_bundle_id() {
+  local path
+  path="$(mdfind "kMDItemAppStoreAdamID == $1" 2>/dev/null | grep -m1 '\.app$')"
+  [ -n "$path" ] || return 1
+  plist_bid "$path"
+}
+
+# App Store apps via mas. An open app is never updated under the user (the App
+# Store quits it to swap the bundle); it is named and left for the next run.
+# Exit 3 when anything was left for later, like a staged cask.
+ut_update_appstore() {
+  local out line id rest name bid ids="" n_up=0 n_open=0
+  out="$(mas outdated)" || { echo "mas outdated failed"; return 1; }
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [ -n "$line" ] || continue
+    id="${line%%[[:space:]]*}"
+    case "$id" in ''|*[!0-9]*) continue ;; esac
+    rest="${line#"$id"}"; rest="${rest#"${rest%%[![:space:]]*}"}"
+    name="${rest% (*}"; name="${name%"${name##*[![:space:]]}"}"
+    bid="$(ut_appstore_bundle_id "$id")"
+    if [ -n "$bid" ] && is_running "$bid"; then
+      echo ">> $name: open — left for the next run (close it to update)"
+      n_open=$((n_open+1))
+      continue
+    fi
+    ids="${ids:+$ids }$id"
+    n_up=$((n_up+1))
+  done <<< "$out"
+  if [ "$n_up" -eq 0 ] && [ "$n_open" -eq 0 ]; then
+    echo "App Store apps are up to date"
+    return 0
+  fi
+  if [ -n "$ids" ]; then
+    # shellcheck disable=SC2086 # one argument per app id
+    mas update $ids || return 1
+  fi
+  echo "appstore: $n_up updated · $n_open open (left for next run)"
+  [ "$n_open" -gt 0 ] && return 3
+  return 0
+}
+
+# macOS system updates. Updates that install without a restart (Safari,
+# XProtect, Command Line Tools, …) are installed now. Anything marked
+# "Action: restart" — point releases and major upgrades — is never installed or
+# restarted from here; it is named with the command to run when ready, and the
+# step exits 3 so it does not read as done.
+ut_update_macos() {
+  local out line label="" labels="" pending="" rc=0 l
+  out="$(softwareupdate -l 2>&1)" || { printf '%s\n' "$out"; echo "softwareupdate -l failed"; return 1; }
+  while IFS= read -r line; do
+    case "$line" in
+      "* Label: "*) label="${line#\* Label: }" ;;
+      *"Title: "*)
+        [ -n "$label" ] || continue
+        case "$line" in
+          *"Action: restart"*)
+            l="${line#*Title: }"; pending="${pending}${l%%,*}"$'\n' ;;
+          *) labels="${labels}${label}"$'\n' ;;
+        esac
+        label="" ;;
+    esac
+  done <<< "$out"
+  if [ -z "$labels" ] && [ -z "$pending" ]; then
+    echo "macOS is up to date"
+    return 0
+  fi
+  while IFS= read -r l; do
+    [ -n "$l" ] || continue
+    echo ">> installing $l"
+    sudo -n softwareupdate -i "$l" || rc=1
+  done <<< "$labels"
+  if [ -n "$pending" ]; then
+    while IFS= read -r l; do
+      [ -n "$l" ] && echo ">> needs a restart, not installed: $l"
+    done <<< "$pending"
+    echo "   install when ready: sudo softwareupdate -i -a -R"
+  fi
+  [ "$rc" -ne 0 ] && return "$rc"
+  [ -n "$pending" ] && return 3
+  return 0
+}
+
 LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
 : > "$LOG"
 
@@ -4443,6 +4530,8 @@ LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
 STEPS=(
   "Homebrew · update everything¦have brew¦ut_update_homebrew_all"
   "Applications · manual DMGs¦have brew && [ \"\$QUIET_APPS\" = \"1\" ]¦ut_update_manual_apps"
+  "App Store · apps¦have mas¦ut_update_appstore"
+  "macOS · system updates¦have softwareupdate¦ut_update_macos"
   "npm · global packages¦have npm¦npm_update_global"
   "pnpm · global packages¦have pnpm¦pnpm_update_global"
   "uv · self + tools¦have uv¦uv_update_self_and_tools"
