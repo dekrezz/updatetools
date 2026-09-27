@@ -23,13 +23,14 @@ a pull request without requesting permission.
    bash -n updatetools
    bash tests/test_manual_apps.sh
    bash tests/test_broken_installs.sh
+   bash tests/test_system_updates.sh
    ```
 
 6. Open a pull request with a clear description of the problem, the solution,
    and how you verified it.
 
-If a change affects user-visible behavior, update `README.md` in the same pull
-request.
+If a change affects user-visible behavior, update `README.md` or `docs/USAGE.md` in
+the same pull request.
 
 ## Pull request checklist
 
