@@ -764,6 +764,23 @@ ut_report_note_staged() {
   printf '%s\n' "$1" >> "$UT_REPORT_DIR/staged"
 }
 
+# Run a brew command for one outdated cask and judge it by the result: brew can
+# exit non-zero after the cask already moved to the new version (its trailing
+# housekeeping, e.g. a pkgconf rebuild that needs a newer Xcode, failed). That
+# failure is still reported, but the cask counts as upgraded.
+ut_cask_brew() { # $1 = token, $2 = greedy flag, rest = brew args
+  local token="$1" greedy="$2" rc
+  shift 2
+  brew "$@"; rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  # shellcheck disable=SC2086
+  if [ -z "$(brew outdated --cask $greedy --quiet "$token" 2>/dev/null)" ]; then
+    echo ">> $token: upgraded, but brew exited non-zero after the upgrade (see the error above)"
+    return 0
+  fi
+  return "$rc"
+}
+
 ut_upgrade_casks_smart() {
   have brew || { echo "Homebrew not found; skipping casks."; return 0; }
   local greedy_flag="${1:-}"
@@ -794,7 +811,7 @@ ut_upgrade_casks_smart() {
         bid="$(app_to_bundleid "$app" 2>/dev/null)"
         echo ">> $token: running & safe to close — quitting, upgrading, relaunching"
         if [ -n "$bid" ] && graceful_quit "$bid" 20; then
-          if brew upgrade --cask "$token"; then
+          if ut_cask_brew "$token" "$greedy_flag" upgrade --cask "$token"; then
             relaunch_app "$bid"
             n_close=$((n_close+1))
           else
@@ -802,7 +819,7 @@ ut_upgrade_casks_smart() {
           fi
         else
           echo "   quit did not complete (unsaved work / not scriptable) — staging instead"
-          if brew upgrade --cask --no-quit "$token"; then
+          if ut_cask_brew "$token" "$greedy_flag" upgrade --cask --no-quit "$token"; then
             ut_report_note_staged "$token"
             n_protect=$((n_protect+1))
           else
@@ -812,7 +829,7 @@ ut_upgrade_casks_smart() {
         ;;
       protect)
         echo ">> $token: running & protected — staging (new version applies on next launch)"
-        if brew upgrade --cask --no-quit "$token"; then
+        if ut_cask_brew "$token" "$greedy_flag" upgrade --cask --no-quit "$token"; then
           ut_report_note_staged "$token"
           n_protect=$((n_protect+1))
         else
@@ -821,7 +838,7 @@ ut_upgrade_casks_smart() {
         ;;
       upgrade)
         echo ">> $token: not running — upgrading in place"
-        if brew upgrade --cask --no-quit "$token"; then
+        if ut_cask_brew "$token" "$greedy_flag" upgrade --cask --no-quit "$token"; then
           n_up=$((n_up+1))
         else
           rc=1
@@ -829,7 +846,7 @@ ut_upgrade_casks_smart() {
         ;;
       broken)
         echo ">> $token: app missing and a stale backup in the Caskroom blocks upgrades — reinstalling"
-        if brew reinstall --cask "$token"; then
+        if ut_cask_brew "$token" "$greedy_flag" reinstall --cask "$token"; then
           n_up=$((n_up+1))
         else
           rc=1
@@ -837,7 +854,7 @@ ut_upgrade_casks_smart() {
         ;;
       *)  # skip = no app artifact (font / CLI-only cask)
         echo ">> $token: no app bundle — upgrading in place"
-        if brew upgrade --cask --no-quit "$token"; then
+        if ut_cask_brew "$token" "$greedy_flag" upgrade --cask --no-quit "$token"; then
           n_up=$((n_up+1))
         else
           rc=1
@@ -4291,13 +4308,25 @@ ut_pnpm_is_brew_managed() {
   [ -n "$prefix" ] && [ "$bin" -ef "$prefix/bin/pnpm" ]
 }
 
+# Upgrade one formula only when brew reports it outdated. Every `brew upgrade`
+# also runs Homebrew's own housekeeping (e.g. rebuilding pkgconf from source
+# after a macOS major upgrade), which can fail on its own; calling it for an
+# already-current formula would turn that unrelated failure into this step's.
+ut_brew_upgrade_formula() {
+  if [ -z "$(brew outdated --formula --quiet "$1" 2>/dev/null)" ]; then
+    echo "$1: already up to date (Homebrew)"
+    return 0
+  fi
+  brew upgrade "$1"
+}
+
 pnpm_update_global() {
   local rc=0 self_rc=0
   if ut_pnpm_is_brew_managed; then
     # `pnpm self-update` would not touch the brew binary: it installs a second
     # pnpm as a global package that nothing on PATH ever runs.
     if ut_brew_cli_lock; then
-      brew upgrade pnpm || rc=$?
+      ut_brew_upgrade_formula pnpm || rc=$?
       ut_brew_cli_unlock
     else
       rc=1
@@ -4310,7 +4339,7 @@ pnpm_update_global() {
     if [ "$self_rc" -ne 0 ]; then
       if have brew && brew list pnpm >/dev/null 2>&1; then
         if ut_brew_cli_lock; then
-          brew upgrade pnpm || rc=$?
+          ut_brew_upgrade_formula pnpm || rc=$?
           ut_brew_cli_unlock
         else
           rc=1
@@ -4335,7 +4364,7 @@ uv_update_self_and_tools() {
   if [ "$self_rc" -ne 0 ]; then
     if have brew && brew list uv >/dev/null 2>&1; then
       if ut_brew_cli_lock; then
-        brew upgrade uv || rc=$?
+        ut_brew_upgrade_formula uv || rc=$?
         ut_brew_cli_unlock
       else
         rc=1
@@ -4558,8 +4587,8 @@ STEPS=(
   "pnpm · global packages¦have pnpm¦pnpm_update_global"
   "uv · self + tools¦have uv¦uv_update_self_and_tools"
   "cargo · update binaries¦have cargo¦{ have cargo-install-update||cargo install cargo-update; }; cargo install-update -a"
-  "Supabase CLI¦have supabase¦if have brew && brew list supabase >/dev/null 2>&1; then brew upgrade supabase; elif have npm; then npm install -g supabase@latest; fi"
-  "Vercel CLI¦have vercel¦if have brew && brew list vercel-cli >/dev/null 2>&1; then brew upgrade vercel-cli; elif have npm && npm list -g vercel >/dev/null 2>&1; then npm install -g vercel@latest; else echo 'vercel present but no known update source matched'; fi"
+  "Supabase CLI¦have supabase¦if have brew && brew list supabase >/dev/null 2>&1; then ut_brew_upgrade_formula supabase; elif have npm; then npm install -g supabase@latest; fi"
+  "Vercel CLI¦have vercel¦if have brew && brew list vercel-cli >/dev/null 2>&1; then ut_brew_upgrade_formula vercel-cli; elif have npm && npm list -g vercel >/dev/null 2>&1; then npm install -g vercel@latest; else echo 'vercel present but no known update source matched'; fi"
   "Claude Code · self-update¦have claude¦claude update"
   "Codex CLI · update¦have codex¦codex_update_npm_only"
   "Antigravity · agy update¦have agy¦agy update"

@@ -115,7 +115,7 @@ mkdir -p "$tmp/prefix/bin"
 ln -s "$tmp/prefix/opt/pnpm/bin/pnpm" "$tmp/prefix/bin/pnpm"
 : > "$pnpm_log"; : > "$brew_log"
 PATH="$tmp/prefix/bin:$saved_path"
-( pnpm_update_global ) >/dev/null 2>&1; rc=$?
+( OUTDATED_CASKS="pnpm"; pnpm_update_global ) >/dev/null 2>&1; rc=$?
 PATH="$saved_path"
 assert_eq "brew-managed pnpm global update succeeds" "0" "$rc"
 assert_not_contains "brew-managed pnpm is not self-updated" "$(cat "$pnpm_log")" "self-update"
