@@ -226,8 +226,10 @@ report to the Desktop as a self-contained HTML file.
 The run has no terminal UI. It serves a page on `127.0.0.1` (random port), opens
 it in your default browser, and prints nothing. The page shows every step with a
 toggle before the run, waits for you to press Start, then shows live progress with
-per-step durations and the version diff at the end; hovering a step opens that
-step's output. Passwords are asked for **in the page** — nothing is echoed as
+per-step durations and the version diff at the end; hovering a step previews that
+step's output, and clicking it keeps the output open to read or copy. When steps
+fail, the page leads with why: the error line from each failed step's own
+output, with steps that failed for the same reason grouped together. Passwords are asked for **in the page** — nothing is echoed as
 you type — and the answer goes straight to `sudo`. If the keyboard is not the
 language that password was accepted in (English until one succeeds), the reveal
 control closes and the sheet says which language is on instead. If a required
