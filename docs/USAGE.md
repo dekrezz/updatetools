@@ -211,14 +211,20 @@ the cask falls back to staging. Pass `--no-close` to disable closing entirely.
 Protected / deferred updates show as **staged** in the step status, not as a
 successful update of the running process.
 
+An auto-updating app often installs its own update before Homebrew sees it, so
+brew still lists the cask as outdated. When the installed bundle already reports
+the cask's latest version, the cask counts as **upgraded**, never staged, even if
+the app is running: brew only re-syncs its own record.
+
 ## The report
 
 Every run diffs versions from before and after, and shows what actually changed
 — with each tool's logo (bundled [Simple Icons](https://simpleicons.org), CC0,
 falling back to the project's own site icon, cached under
 `~/.cache/updatetools/icons`) and the vendor's spelling from Homebrew's metadata,
-so it reads `ChatGPT`, not `chatgpt`. Staged cask upgrades (running process still
-on the old build) are omitted from that “updated” list. `--debug` also writes the
+so it reads `ChatGPT`, not `chatgpt`. Staged cask upgrades (installed, but the running
+process is still on the old build) stay in that list with an **i** mark next to
+the version; hover or focus it to see that the change applies on next launch. `--debug` also writes the
 report to the Desktop as a self-contained HTML file.
 
 ## The dashboard
@@ -226,7 +232,9 @@ report to the Desktop as a self-contained HTML file.
 The run has no terminal UI. It serves a page on `127.0.0.1` (random port), opens
 it in your default browser, and prints nothing. The page shows every step with a
 toggle before the run, waits for you to press Start, then shows live progress with
-per-step durations and the version diff at the end; hovering a step previews that
+per-step durations and the version diff at the end. The timeline at the top
+shows only steps that ran or are still to run; skipped steps stay in the list
+below with their reason. Hovering a step previews that
 step's output, and clicking it keeps the output open to read or copy. When steps
 fail, the page leads with why: the error line from each failed step's own
 output, with steps that failed for the same reason grouped together. Passwords are asked for **in the page** — nothing is echoed as

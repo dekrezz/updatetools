@@ -23,6 +23,8 @@ a pull request without requesting permission.
    bash -n updatetools
    bash tests/test_manual_apps.sh
    bash tests/test_broken_installs.sh
+   bash tests/test_self_updated_casks.sh
+   bash tests/test_staged_report.sh
    bash tests/test_system_updates.sh
    bash tests/test_sudo_scope.sh
    bash tests/test_self_update.sh

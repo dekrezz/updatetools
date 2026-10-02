@@ -417,7 +417,7 @@ cask_to_apps() { # $1 = cask token
 # Verified all three methods agree on this Mac: Google Chrome->com.google.Chrome,
 # Firefox->org.mozilla.firefox, VS Code->com.microsoft.VSCode,
 # Cursor->com.todesktop.230313mzl4w4u92, UTM->com.utmapp.UTM.
-app_to_bundleid() { # $1 = ".app" name (from cask_to_apps) or an absolute path
+app_path() { # $1 = ".app" name (from cask_to_apps) or an absolute path
   local app="$1" p
   case "$app" in
     /*) p="$app" ;;
@@ -425,6 +425,12 @@ app_to_bundleid() { # $1 = ".app" name (from cask_to_apps) or an absolute path
   esac
   [ -d "$p" ] || p="$HOME/Applications/${app##*/}"   # per-user install fallback
   [ -d "$p" ] || return 1                            # not installed
+  printf '%s\n' "$p"
+}
+
+app_to_bundleid() { # $1 = ".app" name (from cask_to_apps) or an absolute path
+  local p
+  p="$(app_path "$1")" || return 1
   /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$p/Contents/Info.plist" 2>/dev/null \
     || mdls -name kMDItemCFBundleIdentifier -raw "$p" 2>/dev/null
 }
@@ -781,12 +787,29 @@ ut_cask_brew() { # $1 = token, $2 = greedy flag, rest = brew args
   return "$rc"
 }
 
+# Auto-updating apps (Squirrel, Sparkle) often install their own update before
+# Homebrew does: brew still lists the cask as outdated from its stale Caskroom
+# record, while the app on disk (and the process running from it) is already on
+# the new version. Echo that version when the bundle matches the cask's latest.
+ut_cask_self_updated() { # $1 = cask token
+  local token="$1" latest app p ver
+  latest="$(brew info --cask --json=v2 "$token" 2>/dev/null | jq -r '.casks[0].version // empty')"
+  latest="${latest%%,*}"   # drop build suffixes like "2.19675.0,5706e55…"
+  [ -n "$latest" ] && [ "$latest" != "latest" ] || return 1
+  app="$(cask_to_apps "$token" | head -n1)"
+  [ -n "$app" ] || return 1
+  p="$(app_path "$app")" || return 1
+  ver="$(ut_plist_value "$p" CFBundleShortVersionString)"
+  [ "$ver" = "$latest" ] || return 1
+  printf '%s\n' "$ver"
+}
+
 ut_upgrade_casks_smart() {
   have brew || { echo "Homebrew not found; skipping casks."; return 0; }
   local greedy_flag="${1:-}"
   local skip_list="${BREW_CASK_SKIP-stats aldente}"
   local close_enabled="${CLOSE_APPS:-1}"
-  local skip_re token verdict app bid
+  local skip_re token verdict app bid cur
   local n_up=0 n_close=0 n_protect=0 n_skip=0
   local rc=0
   local manual=()
@@ -800,6 +823,18 @@ ut_upgrade_casks_smart() {
     # can't be answered in an automated run — report them for manual upgrade.
     if [ -n "$skip_re" ] && printf '%s\n' "$token" | grep -qxE "$skip_re"; then
       manual+=("$token"); n_skip=$((n_skip+1)); continue
+    fi
+
+    # Already updated by the app itself: nothing waits for a relaunch, so it is
+    # not staged even while running. brew still runs to sync its own record.
+    if cur="$(ut_cask_self_updated "$token")"; then
+      echo ">> $token: app already on $cur (updated itself) — syncing Homebrew's record"
+      if ut_cask_brew "$token" "$greedy_flag" upgrade --cask --no-quit "$token"; then
+        n_up=$((n_up+1))
+      else
+        rc=1
+      fi
+      continue
     fi
 
     verdict="$(classify_cask "$token")"
@@ -1341,14 +1376,15 @@ ut_report_begin() {
   return 0
 }
 
-# Look up display + url for a name, appending "key|display|old|new|url" to a file.
-_ut_emit_card() {  # $1 rawname, $2 old, $3 new, $4 out_file
+# Look up display + url for a name, appending "key|display|old|new|url|state" to
+# a file. state is empty, or "staged" when the running app is still on the old build.
+_ut_emit_card() {  # $1 rawname, $2 old, $3 new, $4 out_file, $5 optional state
   local nkey dl disp url
   nkey="$(ut_normalize "$1")"
   dl="$(ut_changelog_lookup "$nkey")"
   disp="${dl%%$'\t'*}"; url="${dl#*$'\t'}"
   [ -n "$disp" ] || disp="$1"
-  printf '%s|%s|%s|%s|%s\n' "$nkey" "$disp" "$2" "$3" "$url" >> "$4"
+  printf '%s|%s|%s|%s|%s|%s\n' "$nkey" "$disp" "$2" "$3" "$url" "${5:-}" >> "$4"
 }
 
 ut_generate_report() {  # $1 = optional output path
@@ -1361,18 +1397,21 @@ ut_generate_report() {  # $1 = optional output path
   data="$(mktemp)"; data2="$(mktemp)"
 
   # brew: a formula/cask that was outdated before and is no longer outdated now
-  # was successfully upgraded this run. Tokens recorded in staged/ were only
-  # staged (--no-quit / deferred); the running process is still on the old build.
+  # was successfully upgraded this run. Tokens recorded in staged/ are installed
+  # too, but the running process is still on the old build — they are listed
+  # with state "staged" so the report can say the change applies on next launch.
   if [ -f "$UT_REPORT_DIR/brew" ] && have brew; then
     after_brew="$( { brew outdated --quiet 2>/dev/null; \
                      brew outdated --cask --greedy --quiet 2>/dev/null; } )"
+    local state
     while IFS='|' read -r name old new kind; do
       [ -n "$name" ] || continue
       printf '%s\n' "$after_brew" | grep -qxF "$name" && continue   # still outdated
+      state=""
       if [ -f "$UT_REPORT_DIR/staged" ] && grep -qxF "$name" "$UT_REPORT_DIR/staged" 2>/dev/null; then
-        continue
+        state=staged
       fi
-      _ut_emit_card "$name" "$old" "$new" "$data"
+      _ut_emit_card "$name" "$old" "$new" "$data" "$state"
     done < "$UT_REPORT_DIR/brew"
   fi
 
@@ -1897,11 +1936,12 @@ generate_html_report() {
   today=$(date '+%Y-%m-%d')
 
   local cards="" count=0 used_slugs=""
-  local key display old new url
-  local d_e o_e n_e u_e link_html
+  local key display old new url state
+  local d_e o_e n_e u_e link_html staged_mark staged_detail
+  local staged_text="Installed. The running app switches to this version on its next launch."
 
   # `|| [ -n "$key" ]` catches a final line without a trailing newline.
-  while IFS='|' read -r key display old new url || [ -n "${key:-}" ]; do
+  while IFS='|' read -r key display old new url state || [ -n "${key:-}" ]; do
     # Skip fully blank lines.
     if [ -z "${key:-}" ] && [ -z "${display:-}" ] && [ -z "${old:-}" ] \
        && [ -z "${new:-}" ] && [ -z "${url:-}" ]; then
@@ -1913,6 +1953,16 @@ generate_html_report() {
     old=${old:-}
     new=${new:-}
     url=${url:-}
+    state=${state:-}
+
+    # Staged: on disk, not yet in the running app. The row is a <button>, so the
+    # mark is a plain hover hint there; the expanded detail spells it out.
+    staged_mark=""; staged_detail=""
+    if [ "$state" = "staged" ]; then
+      staged_mark="<span class=\"staged-note\" title=\"$staged_text\" aria-label=\"Staged: $staged_text\">i</span>"
+      staged_detail="          <p class=\"staged-detail\">$staged_text</p>
+"
+    fi
 
     # Print the tool the way its vendor writes it — "ChatGPT", not "chatgpt".
     display=$(ut_pretty_name "$key" "$display")
@@ -1965,7 +2015,7 @@ generate_html_report() {
       <button class=\"row\" type=\"button\" aria-expanded=\"false\">
         $logo
         <span class=\"name\">$d_e</span>
-        <span class=\"ver\"><span class=\"old\">$os_e</span><span class=\"arrow\" aria-hidden=\"true\">&#8594;</span><span class=\"new\">$ns_e</span></span>
+        <span class=\"ver\"><span class=\"old\">$os_e</span><span class=\"arrow\" aria-hidden=\"true\">&#8594;</span><span class=\"new\">$ns_e</span>$staged_mark</span>
         <span class=\"chev\" aria-hidden=\"true\"></span>
       </button>
       <div class=\"detail\" hidden>
@@ -1974,7 +2024,7 @@ generate_html_report() {
             <dt>from</dt><dd><code>$o_e</code></dd>
             <dt>to</dt><dd><code>$n_e</code></dd>
           </dl>
-$link_html
+$staged_detail$link_html
         </div>
       </div>
     </article>
@@ -2153,6 +2203,12 @@ HTML_HEAD
     padding:0 1rem 1rem; display:flex; flex-direction:column; gap:.875rem;
     border-top:1px solid var(--hairline); margin-top:0; padding-top:.875rem;
   }
+  .staged-note{
+    display:inline-grid; place-items:center; width:1rem; height:1rem; margin-left:.125rem;
+    border:1px solid currentColor; border-radius:50%; color:var(--text-3);
+    font:italic 600 .625rem/1 Georgia,serif; cursor:help;
+  }
+  .staged-detail{margin:0 0 .75rem; color:var(--text-2); font-size:.8125rem}
   .kv{display:grid; grid-template-columns:auto 1fr; gap:.375rem .875rem; margin:0}
   .kv dt{color:var(--text-3); font-size:.8125rem}
   .kv dd{margin:0; font-family:var(--mono); font-size:.8125rem; overflow-wrap:anywhere; color:var(--text-2)}
@@ -2749,6 +2805,20 @@ try {
   .ledger .ver .from em{color:var(--dust); font-weight:450}
   .ledger .ver .to{color:var(--ink)}
   .ledger .ver .to em{color:var(--rust); font-weight:650}
+  .ledger .ver-cell{display:inline-flex; align-items:center; gap:.55rem}
+  .staged-note{
+    position:relative; display:inline-grid; place-items:center; width:1.05rem; height:1.05rem;
+    border:1px solid currentColor; border-radius:50%; color:var(--dust);
+    font:italic 600 .68rem/1 Georgia,serif; cursor:help;
+  }
+  .staged-note:hover,.staged-note:focus-visible{color:var(--ink); outline:none}
+  .staged-note::after{
+    content:attr(data-tip); position:absolute; right:0; bottom:calc(100% + .5rem); z-index:2;
+    width:max-content; max-width:16rem; padding:.5rem .65rem; border-radius:6px;
+    background:var(--ink); color:var(--paper); font:400 .78rem/1.35 var(--sans); text-align:left;
+    opacity:0; pointer-events:none; transition:opacity .12s ease;
+  }
+  .staged-note:hover::after,.staged-note:focus-visible::after{opacity:1}
   .ledger-empty{margin:2rem 0 0; color:var(--dust); font-size:1.25rem}
   @media (max-width:40rem){
     .ledger{padding:4.25rem 1.15rem 3rem}
@@ -3202,8 +3272,10 @@ WEB_HTML_HEAD
     }
     return s.why !== 'off' && s.on !== false;
   }
+  // After Start, skipped steps leave the ribbon/legend too; the list still explains them.
   function stepsForRibbon(steps, phase, localOn) {
-    return (steps || []).filter((s, i) => s.slug !== 'report' && stepSelected(s, i, phase, localOn));
+    return (steps || []).filter((s, i) => s.slug !== 'report' && stepSelected(s, i, phase, localOn)
+      && (phase === 'choose' || s.s !== 'skip'));
   }
   function stepsForList(steps, phase, localOn) {
     if (phase === 'choose') return steps || [];
@@ -3400,7 +3472,7 @@ WEB_HTML_HEAD
         <li>
           ${logo(u.slug, u.img, u.n)}
           <span class="name">${escapeHtml(u.n)}</span>
-          ${versionMarkup(u.o, u.w)}
+          <span class="ver-cell">${versionMarkup(u.o, u.w)}${stagedNote(u)}</span>
         </li>`).join('');
       renderAttention(st);
       // A clean run ends on the record. A run with failures ends here, on the
@@ -3524,7 +3596,7 @@ WEB_HTML_HEAD
     if (latestPhase !== 'done') return '# Report\n\nCollecting version changes…';
     if (!latestUpdates.length) return '# Report\n\nNo version changes detected in this run.';
     return ['# Report', '', '## Updated', '', ...latestUpdates.map(
-      (u) => `- **${u.n}**: \`${u.o}\` → \`${u.w}\``
+      (u) => `- **${u.n}**: \`${u.o}\` → \`${u.w}\`${u.st === 'staged' ? ' (staged: applies on next launch)' : ''}`
     )].join('\n');
   }
   function logToMarkdown(raw) {
@@ -3554,6 +3626,12 @@ WEB_HTML_HEAD
       out.push(t);
     }
     return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+  // Staged = installed on disk, the running app still on the old build.
+  function stagedNote(u) {
+    if (u.st !== 'staged') return '';
+    const tip = `Installed. ${u.n} switches to this version on its next launch.`;
+    return `<span class="staged-note" tabindex="0" role="img" aria-label="Staged: ${escapeHtml(tip)}" data-tip="${escapeHtml(tip)}">i</span>`;
   }
   function versionMarkup(oldV, newV) {
     const oldS = String(oldV ?? '');
@@ -4190,9 +4268,9 @@ ut_web_state() {
 # ut_web_updates DATA_FILE — turn the report's records into the JSON the page
 # shows in its "after" section (same logos and vendor names as the HTML report).
 ut_web_updates() {
-  local f=${1-} key display old new url slug img out=""
+  local f=${1-} key display old new url state slug img out=""
   [ -r "$f" ] || return 0
-  while IFS='|' read -r key display old new url || [ -n "${key:-}" ]; do
+  while IFS='|' read -r key display old new url state || [ -n "${key:-}" ]; do
     [ -n "${key:-}" ] || continue
     display=$(ut_pretty_name "$key" "${display:-$key}")
     slug="$(ut_icon_slug "$display")"
@@ -4204,6 +4282,7 @@ ut_web_updates() {
     out+="{\"n\":\"$(ut_json_escape "$display")\",\"o\":\"$(ut_json_escape "${old%%,*}")\""
     out+=",\"w\":\"$(ut_json_escape "${new%%,*}")\",\"slug\":\"$slug\""
     [ -n "$img" ] && out+=",\"img\":\"$img\""
+    [ "${state:-}" = "staged" ] && out+=",\"st\":\"staged\""
     out+="}"
   done < "$f"
   printf '%s' "$out"

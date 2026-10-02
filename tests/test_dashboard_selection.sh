@@ -77,11 +77,17 @@ assertEq(
   stepsForRibbon(steps, 'choose', null).map((s) => s.slug)
 );
 
-// after Start: ribbon + list omit off tools; guard-skipped selected stays
+// after Start: ribbon + legend show only steps that ran (or will run);
+// skipped steps (off or guard) stay out of them but remain in the list
 assertEq(
-  'run ribbon omits off and report',
-  ['homebrew', 'rust'],
+  'run ribbon omits off, skipped and report',
+  ['homebrew'],
   stepsForRibbon(steps, 'run', null).map((s) => s.slug)
+);
+assertEq(
+  'pending step stays in the ribbon until it is skipped',
+  ['homebrew', 'rust'],
+  stepsForRibbon(steps.map((s) => (s.slug === 'rust' ? { ...s, s: 'pending' } : s)), 'run', null).map((s) => s.slug)
 );
 assertEq(
   'run list omits off keeps guard',
