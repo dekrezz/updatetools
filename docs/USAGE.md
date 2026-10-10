@@ -92,7 +92,7 @@ The **dashboard is the default** on an interactive terminal. When stdout isn't a
 TTY (pipes, cron, CI) it automatically uses plain text — so scripting it is safe
 without any flag.
 
-`--version` prints the release tag for a copy installed from one (`2026.10.02`),
+`--version` prints the release tag for a copy installed from one (`2026.10.10`),
 or `git describe` when run from a checkout of this repo. Other installed copies
 use the `UPDATETOOLS_REV` stamp written by `--self-update` or the Homebrew
 formula. `--self-update` stamps the release tag it installed.
