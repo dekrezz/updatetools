@@ -2526,9 +2526,17 @@ try {
   ::selection{background:color-mix(in oklab,var(--accent) 28%,transparent)}
   .wrap{
     max-width:calc(720px + 3rem); margin:0 auto; padding:5.5rem 1.5rem 6rem;
-    animation:app-in .4s ease-out both;
   }
+  /* No phase until the first state.json lands: show nothing rather than guess
+     (a 00:00 timer before the choice, or toggles before a CLI-started run). */
+  html:not([data-phase]) .wrap{visibility:hidden; animation:show-anyway 0s 1.5s forwards}
+  @keyframes show-anyway{to{visibility:visible}}
+  html[data-phase] .wrap{animation:app-in .4s ease-out both}
+  /* The chooser's own pieces carry its entrance; a page fade on top would dim
+     it twice, and Start must not replay it (html.chose: the page began in choose). */
+  html[data-phase="choose"] .wrap,html.chose .wrap{animation:none}
   @keyframes app-in{from{opacity:0}}
+  @keyframes rise-in{from{opacity:0; transform:translateY(8px)}}
 
   /* ── masthead: wordmark + status chip, then the timer, then progress ──── */
   .masthead{padding:0 0 2.25rem}
@@ -2546,6 +2554,21 @@ try {
     font:500 12px/18px var(--sans); letter-spacing:.18px;
     white-space:nowrap;
   }
+  /* Timer, totals, ribbon and legend mean nothing before Start: the choose
+     phase folds them away (0fr row, no gap left) and Start unfolds them. */
+  .gauge{display:grid; grid-template-rows:1fr}
+  .gauge-in{min-width:0; min-height:0}
+  html[data-phase="choose"] .gauge{grid-template-rows:0fr; opacity:0; visibility:hidden}
+  html[data-phase="choose"] .gauge-in{overflow:hidden}
+  html[data-phase="choose"] .masthead{animation:rise-in .5s var(--ease-out-expo) backwards}
+  html.to-run .gauge{
+    transition:grid-template-rows .6s var(--ease-out-expo), opacity .3s ease-out .06s, visibility 0s;
+  }
+  html.to-run .gauge-in{overflow:hidden}
+  html.to-run .gauge-in > *{animation:rise-in .6s var(--ease-out-expo) backwards}
+  html.to-run .gauge-in > .clock{animation-delay:.04s}
+  html.to-run .gauge-in > .ribbon{animation-delay:.1s}
+  html.to-run .gauge-in > .legend{animation-delay:.14s}
   .clock{
     margin:2.25rem 0 0; color:var(--ink);
     font:450 clamp(56px,9vw,72px)/1 var(--display);
@@ -2629,18 +2652,31 @@ try {
     align-items:center; column-gap:14px; padding:10px 14px 10px 10px;
     border-radius:var(--r-md);
     cursor:pointer; -webkit-tap-highlight-color:transparent;
-    opacity:0; transform:translateY(4px);
-    animation:row-in .35s var(--ease-out-quart) forwards;
+    opacity:0; transform:translateY(8px);
+    animation:row-in .35s var(--ease-out-expo) calc(min(var(--i,0),8) * 18ms) forwards;
     transition:background-color .15s ease-out, color .15s ease-out;
   }
-  .step:nth-child(2){animation-delay:.025s}
-  .step:nth-child(3){animation-delay:.05s}
-  .step:nth-child(4){animation-delay:.075s}
-  .step:nth-child(5){animation-delay:.1s}
-  .step:nth-child(6){animation-delay:.125s}
-  .step:nth-child(7){animation-delay:.15s}
-  .step:nth-child(8){animation-delay:.175s}
   @keyframes row-in{to{opacity:1;transform:none}}
+  /* Start: steps left off fold away, toggles fade, status marks fade in. */
+  /* #steps outranks .step.choose.off (opacity .6, later in the file), so the
+     row fades out before the collapsing height clips it. */
+  #steps .step.leave{
+    overflow:hidden; opacity:0; height:0 !important; padding-top:0; padding-bottom:0; margin-top:0 !important;
+    pointer-events:none;
+    transition:height .38s var(--ease-out-expo), padding .38s var(--ease-out-expo), margin .38s var(--ease-out-expo), opacity .16s ease-out;
+  }
+  .step.choose .step-state{position:relative}
+  .toggle{transform-origin:100% 50%}
+  html.to-run .step.choose .toggle{
+    opacity:0; transform:scale(.45);
+    transition:opacity .15s ease-out, transform .3s var(--ease-out-expo);
+  }
+  /* The waiting ring appears where the toggle shrinks to, while it fades. */
+  .morph-mark{
+    position:absolute; right:0; top:50%; margin-top:-8px; color:var(--ink-4);
+    animation:state-in .3s var(--ease-out-expo) .05s backwards;
+  }
+  @keyframes state-in{from{opacity:0; transform:scale(.85)}}
   .steps.ready .step{opacity:1;transform:none;animation:none}
   .step + .step{margin-top:2px}
   .step:hover{background:var(--hover)}
@@ -2745,6 +2781,11 @@ try {
     display:none; margin:1.5rem 0 0; padding:0;
   }
   .chooser-bar.on{display:block}
+  html[data-phase="choose"] .chooser-bar.on{animation:rise-in .45s var(--ease-out-expo) .06s backwards}
+  html.to-run .chooser-bar{
+    opacity:0; transform:translateY(8px); pointer-events:none;
+    transition:opacity .16s ease-out, transform .3s var(--ease-out-expo);
+  }
   .chooser-bar .select-all,
   .chooser-bar .start{
     appearance:none; cursor:pointer; width:100%; min-height:48px;
@@ -2813,12 +2854,20 @@ try {
   @keyframes spin{to{transform:rotate(360deg)}}
 
   /* live output of the running step, pinned under its own row */
+  /* One fixed line, so the first output line never resizes the row; the row
+     grows into it once (ease-out-expo) instead of snapping. */
   .tail{
-    grid-column:2 / -1; min-height:1.15em; padding-top:6px;
+    grid-column:2 / -1; box-sizing:border-box; height:22.8px; padding-top:6px;
     font:400 12px/16.8px var(--mono); color:var(--ink-3);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
     opacity:1; transition:opacity .3s ease-out;
+    animation:tail-in .45s var(--ease-out-expo) backwards;
   }
+  @keyframes tail-in{from{height:0; padding-top:0}}
+  /* A finished step hands its line back as the next one takes a line: both
+     move together, so the rows below them stay put. */
+  .tail.tail-out{animation:tail-out .45s var(--ease-out-expo) forwards}
+  @keyframes tail-out{to{height:0; padding-top:0; opacity:0}}
   .tail.fade{opacity:.22}
 
   /* ── result ────────────────────────────────────────────────────────────── */
@@ -3137,6 +3186,8 @@ try {
     .seg{transition:none}
     .seg.run{animation:none; background:var(--run)}
     .scrim,.sheet,.tail{transition:none}
+    html[data-phase] .wrap,html[data-phase="choose"] .masthead,html[data-phase="choose"] .chooser-bar.on,.gauge-in > *,.morph-mark,.tail{animation:none}
+    .gauge,.step.leave,.chooser-bar{transition:none}
   }
   @media (prefers-reduced-transparency: reduce){
     .theme-switch,.btn,.ledger-back,.chooser-bar .select-all{background:var(--bg); backdrop-filter:none; -webkit-backdrop-filter:none}
@@ -3176,10 +3227,12 @@ try {
         <h1>updatetools</h1>
         <span class="phase" id="phase" role="status" aria-live="polite">starting…</span>
       </div>
-      <div class="clock" id="clock" aria-live="off">00:00</div>
-      <dl class="tally" id="tally" hidden></dl>
-      <div class="ribbon" id="ribbon" aria-hidden="true"></div>
-      <ul class="legend" id="legend"></ul>
+      <div class="gauge" id="gauge"><div class="gauge-in">
+        <div class="clock" id="clock" aria-live="off">00:00</div>
+        <dl class="tally" id="tally" hidden></dl>
+        <div class="ribbon" id="ribbon" aria-hidden="true"></div>
+        <ul class="legend" id="legend"></ul>
+      </div></div>
     </header>
 
     <section class="result" id="result">
@@ -3442,13 +3495,83 @@ WEB_HTML_HEAD
   let latestUpdates = [], latestPhase = 'run', latestState = null;
   let chooseLocal = null; // null = follow server; array of bools once the user toggles
   let startSent = false;
+  // choose → run is one choreographed move: the gauge unfolds, steps left off
+  // fold away and toggles fade; the list is rebuilt for the run underneath.
+  let morphing = false, morphNext = null;
+  const root = document.documentElement;
+  function runFromChoice() {
+    const base = latestState || { steps: [] };
+    return Object.assign({}, base, {
+      phase: 'run', elapsed: 0, tail: '',
+      steps: (base.steps || []).map((s, i) => {
+        const on = chooseLocal ? !!chooseLocal[i] : s.on !== false;
+        return Object.assign({}, s, on ? { on: true, s: 'pending' } : { on: false, s: 'skip', why: 'off' });
+      }),
+    });
+  }
+  // The first running row grows its tail line during the morph, together with
+  // the gauge, instead of pushing the list down a second time afterwards.
+  function reserveRunTail(st) {
+    if (reduce || !st || st.phase !== 'run') return;
+    const rows = stepsForList(st.steps, st.phase, chooseLocal);
+    const idx = rows.findIndex((s) => s.s === 'run');
+    if (idx < 0) return;
+    const staying = Array.from($('steps').children).filter((el) => !el.classList.contains('leave'));
+    const el = staying[idx];
+    if (!el || el.querySelector('.tail')) return;
+    const tail = document.createElement('span');
+    tail.className = 'tail';
+    tail.setAttribute('aria-hidden', 'true');
+    el.appendChild(tail);
+  }
+  function beginRunMorph(next) {
+    if (morphing) return;
+    morphing = true;
+    morphNext = next;
+    holdHover();
+    if (!chooseLocal) syncChooseLocalFromDom();
+    const finish = () => {
+      $('steps').querySelectorAll('.step.leave').forEach((el) => el.remove());
+      morphing = false;
+      const st = morphNext && morphNext.phase !== 'choose' ? morphNext : runFromChoice();
+      morphNext = null;
+      // Rows rebuilt for the run must not replay the entrance, even if Start
+      // came before the first-render timer settled the list.
+      clearTimeout(stepsReadyTimer);
+      stepsReadyTimer = -1;
+      $('steps').classList.add('ready');
+      render(st);
+      setTimeout(() => root.classList.remove('to-run'), 760);
+    };
+    if (reduce) { root.dataset.phase = 'run'; finish(); if (window.scrollY > 0) window.scrollTo(0, 0); return; }
+    root.classList.add('to-run');
+    root.dataset.phase = 'run';
+    const leaving = Array.from($('steps').children).filter((el) => !el.classList.contains('on'));
+    leaving.forEach((el) => { el.style.height = el.offsetHeight + 'px'; });
+    void $('steps').offsetHeight;
+    leaving.forEach((el) => el.classList.add('leave'));
+    reserveRunTail(next);
+    // Toggles shrink into the waiting ring that takes their place.
+    Array.from($('steps').children).filter((el) => el.classList.contains('on')).forEach((el) => {
+      const ss = el.querySelector('.step-state');
+      if (ss) ss.insertAdjacentHTML('beforeend', '<svg class="morph-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>');
+    });
+    if (window.scrollY > 0) window.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(finish, 380);
+  }
   function render(st) {
+    if (morphing) { morphNext = st; reserveRunTail(st); return; }
+    // Start was sent but the server still says choose: keep the run view.
+    if (startSent && st.phase === 'choose') return;
+    if (root.dataset.phase === 'choose' && st.phase !== 'choose') { beginRunMorph(st); return; }
+    root.dataset.phase = st.phase;
     latestState = st;
     latestUpdates = st.updates || [];
     latestPhase = st.phase;
     const counts = selectedCounts(st.steps, st.phase, chooseLocal);
     // header
     if (st.phase === 'choose') {
+      root.classList.add('chose');
       $('phase').textContent = 'choose steps';
       $('clock').textContent = '00:00';
       $('chooser-bar').classList.add('on');
@@ -3500,8 +3623,23 @@ WEB_HTML_HEAD
         box.innerHTML = stepMarkup(row, st);
         const next = box.firstElementChild;
         next.dataset.render = key;
+        next.style.setProperty('--i', i);
         if (old) {
           if (activeLogEl === old) hideStepLog(old);
+          const oldTail = old.querySelector('.tail');
+          if (oldTail && s.s !== 'run' && !reduce && old.classList.contains('run')) {
+            const out = document.createElement('span');
+            out.className = 'tail tail-out';
+            out.setAttribute('aria-hidden', 'true');
+            out.textContent = oldTail.textContent;
+            out.addEventListener('animationend', () => out.remove());
+            next.appendChild(out);
+          }
+          // Tail space reserved during the Start morph: keep it, no second grow.
+          const nextTail = next.querySelector('.tail');
+          if (nextTail && oldTail && !old.classList.contains('run') && !oldTail.classList.contains('tail-out')) {
+            nextTail.style.animation = 'none';
+          }
           old.replaceWith(next);
         } else {
           list.appendChild(next);
@@ -3511,7 +3649,7 @@ WEB_HTML_HEAD
       while (list.children.length > rows.length) list.lastElementChild.remove();
       if (st.phase === 'choose') syncSelectAllLabel();
       if (!list.classList.contains('ready') && !stepsReadyTimer) {
-        stepsReadyTimer = setTimeout(() => list.classList.add('ready'), 450);
+        stepsReadyTimer = setTimeout(() => list.classList.add('ready'), 650);
       }
     } else {
       // cheap path: only the running step's clock ticks
@@ -4082,8 +4220,23 @@ WEB_HTML_HEAD
   infoBtn.addEventListener('focus', () => tipOn(true));
   infoBtn.addEventListener('blur', () => tipOn(false));
 
+  // Start reflows the list (rows fold, the page scrolls up) under a still
+  // pointer. A row sliding under it is not the user hovering it: no log opens
+  // until the pointer itself moves.
+  let pointerAt = null, hoverHeldAt = null, hoverHeld = false;
+  function holdHover() { hoverHeld = true; hoverHeldAt = pointerAt; }
+  const notePointer = (e) => {
+    const at = { x: e.clientX, y: e.clientY };
+    if (hoverHeld) {
+      if (!hoverHeldAt) hoverHeldAt = at;
+      else if (Math.abs(at.x - hoverHeldAt.x) > 2 || Math.abs(at.y - hoverHeldAt.y) > 2) hoverHeld = false;
+    }
+    pointerAt = at;
+  };
+  document.addEventListener('pointermove', notePointer, { passive: true });
+  document.addEventListener('pointerdown', notePointer, { passive: true });
   $('steps').addEventListener('pointerover', (e) => {
-    if (latestPhase === 'choose') return;
+    if (latestPhase === 'choose' || hoverHeld) return;
     const el = e.target.closest('.step');
     if (!hoverLogs || !el || el.contains(e.relatedTarget)) return;
     clearTimeout(hoverOpenTimer);
@@ -4208,15 +4361,19 @@ WEB_HTML_HEAD
       .map((el) => el.dataset.key)
       .filter(Boolean);
     try {
-      await fetch('start', {
+      const r = await fetch('start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled }),
       });
-    } catch {
+      if (!r.ok) throw new Error(`start: HTTP ${r.status}`);
+    } catch (err) {
+      console.error(err);
       startSent = false;
       $('start-run').disabled = false;
+      return;
     }
+    if (root.dataset.phase === 'choose') beginRunMorph(null);
   });
 
   let misses = 0;
@@ -4263,6 +4420,7 @@ WEB_HTML_HEAD
       if (misses === 8 && latestPhase !== 'done' && latestPhase !== 'error') {
         $('phase').textContent = 'lost contact with the run';
         $('phase').classList.add('lost');
+        if (!root.dataset.phase) root.dataset.phase = 'lost';
         document.title = 'updatetools — disconnected';
       }
     }
