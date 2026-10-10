@@ -30,7 +30,7 @@ Verbose output streams to a per-run log file; the dashboard only shows status.
 ### Homebrew (recommended)
 
 This repo is a Homebrew tap (`Formula/updatetools.rb`). The stable formula pins
-release [`2026.10.02`](https://github.com/dekrezz/updatetools/releases/tag/2026.10.02).
+release [`2026.10.10`](https://github.com/dekrezz/updatetools/releases/tag/2026.10.10).
 `--HEAD` tracks `main` via git.
 
 ```bash
