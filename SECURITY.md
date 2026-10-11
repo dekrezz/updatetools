@@ -34,9 +34,11 @@ closes.
 - report icons: `icons.duckduckgo.com` (by the vendor's host name) and
   `github.com/<org>.png`, cached in `~/.cache/updatetools/icons`.
 
-**Background processes:** an update for an open DMG app is left to a one-shot
-helper that waits for you to quit the app, swaps the bundle atomically, and
-deletes itself. The swap helper is compiled locally from source embedded in the
+**Background processes:** an update for an open DMG app that is not safe to
+restart is left to a one-shot helper that waits for you to quit the app, swaps
+the bundle atomically, and deletes itself. Open apps that are safe to restart
+(document-less menu-bar utilities hosting no other processes) are sent a
+standard Quit request and reopened from their own path; nothing is force-killed. The swap helper is compiled locally from source embedded in the
 script (`xcrun clang`). A LaunchAgent is installed only by `--schedule`.
 
 **What it does not protect against:**

@@ -29,7 +29,11 @@ Then run:
 updatetools
 ```
 
-A live dashboard opens in your browser. Pick what to update, press **Start**.
+A live dashboard opens in your browser and checks what is outdated while you
+look: every app with its old and new version, and what will happen to it if it
+is open (restarted, or left until you quit it, and why). Press **Update**
+(or <kbd>⌘</kbd><kbd>↩</kbd>). `updatetools --yes` skips that screen and starts
+with your saved selection.
 
 ## What it updates
 
@@ -48,6 +52,7 @@ Tools you don't have are skipped. At the end you see exactly what changed.
 ## Safe by default
 
 - **Never interrupts your work.** Apps that are open or have unsaved changes get the update on next launch.
+- **Restarts what is safe to restart.** Open menu-bar utilities with nothing to lose (Rectangle, Maccy, Ice…) are quit, updated and reopened in the background, exactly as they were. Terminals, browsers, editors, password managers and anything hosting other processes are never quit. Nothing is ever force-killed.
 - **Never restarts your Mac.** Updates that need a restart are listed, not installed.
 - **Root only where needed.** sudo is dropped before npm, cargo, uv and other package updates run. [Details](SECURITY.md#what-updatetools-does-on-your-mac)
 - **Nothing to clean up.** Logs and the report are temporary unless you pass `--debug`.
@@ -56,6 +61,7 @@ Tools you don't have are skipped. At the end you see exactly what changed.
 
 ```bash
 updatetools --plain              # text output, no browser
+updatetools --yes                # start at once with the saved selection
 updatetools --only homebrew,macos
 updatetools --skip appstore
 updatetools --schedule 1d        # run every day in the background

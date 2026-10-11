@@ -74,10 +74,21 @@ export UPDATETOOLS_DEFER_SPAWN
 assert_false "running app is never replaced immediately" ut_install_or_defer "$tmp/running.app" "$tmp/waiting.app" "dev.test.Running"
 assert_eq "running target remains untouched" "running" "$(cat "$tmp/running.app/value")"
 assert_eq "staged update remains available" "waiting" "$(cat "$tmp/waiting.app/value")"
+# Policy change (intentional): a running app that passes ut_restart_safe is now
+# quit -> swapped -> relaunched (covered in tests/test_safe_restart.sh). Any
+# other running app must still never get a Quit event.
+quit_log="$tmp/quit.log"; : > "$quit_log"
+graceful_quit() { printf '%s\n' "$1" >> "$quit_log"; return 0; }
+ut_restart_safe() { return 1; }
+mkdir "$tmp/busy.app" "$tmp/busy-new.app"
+assert_false "unsafe running app is deferred, not restarted" ut_install_or_defer "$tmp/busy.app" "$tmp/busy-new.app" "dev.test.Busy"
+assert_eq "unsafe running app never gets a quit event" "" "$(cat "$quit_log")"
+unset -f graceful_quit ut_restart_safe
+# shellcheck source=../updatetools
+source "$ROOT/updatetools"
+is_running() { return 0; }
 manual_impl="$(declare -f ut_update_manual_apps; declare -f ut_install_or_defer; declare -f ut_spawn_deferred_swap)"
-assert_not_contains "manual updater never sends quit events" "$manual_impl" "graceful_quit"
-assert_not_contains "manual updater never relaunches apps" "$manual_impl" "relaunch_app"
-assert_not_contains "manual updater never uses AppleScript" "$manual_impl" "osascript"
+assert_not_contains "manual updater never uses AppleScript directly" "$manual_impl" "osascript"
 
 assert_true "https DMG URL is accepted" ut_urls_look_like_dmg "https://example.test/App-1.2.dmg"
 assert_false "empty source is not a DMG" ut_urls_look_like_dmg ""

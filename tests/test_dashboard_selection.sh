@@ -20,16 +20,18 @@ assert_eq() {
   fi
 }
 
-# Header order: ribbon sits above the clock.
+# Layout: the header carries the status line, the Start button and the
+# progress ribbon; the source list and the main pane follow.
 ut_web_page > "$tmp/page.html"
 python3 - "$tmp/page.html" <<'PY' > "$tmp/order.txt"
 import re, sys
 html = open(sys.argv[1]).read()
-ids = re.findall(r'id="(ribbon|clock|legend|steps)"', html)
+ids = re.findall(r'id="(headline|start-run|ribbon|steps|pane)"', html)
 print(' '.join(ids))
 PY
-assert_eq "header order clock then ribbon then legend" "clock ribbon legend steps" "$(cat "$tmp/order.txt")"
+assert_eq "header then sources then pane" "headline start-run ribbon steps pane" "$(cat "$tmp/order.txt")"
 grep -q 'id="select-all"' "$tmp/page.html" && pass "select all control" || fail "select all control"
+grep -q 'aria-keyshortcuts="Meta+Enter"' "$tmp/page.html" && pass "start has a keyboard shortcut" || fail "start has a keyboard shortcut"
 
 # Drive the named selection helpers extracted from the generated page.
 node - "$tmp/page.html" <<'NODE'

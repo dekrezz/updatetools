@@ -28,6 +28,8 @@ a pull request without requesting permission.
    bash tests/test_system_updates.sh
    bash tests/test_sudo_scope.sh
    bash tests/test_self_update.sh
+   bash tests/test_dashboard_plan.sh
+   bash tests/test_safe_restart.sh
    ```
 
 6. Open a pull request with a clear description of the problem, the solution,

@@ -13,9 +13,9 @@ Covered today (matches the script's step table):
 | Area | Tools |
 |------|-------|
 | macOS | `softwareupdate`: updates that need no restart (Safari, XProtect, Command Line Tools) are installed; restart-required updates and major upgrades are listed, never installed or restarted |
-| App Store | `mas update` for apps that are not open; open apps are left for the next run |
+| App Store | `mas update`; an open app is restarted if it is safe to restart, otherwise left for the next run |
 | Homebrew | `brew update`, formula & cask upgrades (greedy), autoremove, cleanup |
-| Direct-download apps | Strictly matched drag-and-drop `.app` bundles from DMGs, staged without quitting running apps |
+| Direct-download apps | Strictly matched drag-and-drop `.app` bundles from DMGs; open apps are restarted only when safe to restart, otherwise staged until they quit |
 | Node | `npm` globals, `pnpm` |
 | Python | `uv` (self + tools) |
 | Rust | `cargo install-update` |
@@ -103,7 +103,8 @@ formula. `--self-update` stamps the release tag it installed.
 |------|--------|
 | `--plain` | Force plain scrolling output instead of the dashboard. |
 | `--web` | Force the dashboard (default; useful only to override `PLAIN=1`). |
-| `--only a,b` | This run only: enable these step keys (comma/space list). Does not rewrite the saved set unless you confirm Start in the dashboard. |
+| `--yes`, `-y` | Open the dashboard and start at once with the saved selection (plus `--only` / `--skip`), without waiting for **Update**. Does not rewrite the saved set. |
+| `--only a,b` | This run only: enable these step keys (comma/space list). Does not rewrite the saved set unless you press Update in the dashboard. |
 | `--skip a,b` | This run only: disable these step keys. |
 | `--debug`, `--keep` | Keep the run log and write the HTML report to the Desktop. |
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
@@ -120,9 +121,12 @@ Default is to notify at the end of every run (dashboard and `--plain`, including
 
 ### Which steps run
 
-The dashboard lists every step with a toggle and waits for **Start update** before
-any step command runs. Closing the tab still cancels the run. Your enabled set is
-saved to `~/.config/updatetools/enabled` (one key per line) when you press Start.
+The dashboard lists the sources installed on this Mac with a checkbox and waits
+for **Update** (or <kbd>⌘</kbd><kbd>↩</kbd>) before any step command runs; tools
+that are not installed are named once below the list instead. Closing the tab
+still cancels the run. Your enabled set is saved to
+`~/.config/updatetools/enabled` (one key per line) when you press Update; the
+internal `report` step always runs. With `--yes` the run starts immediately.
 A missing file means all steps are on; an unreadable file is a hard error.
 
 Plain mode (`--plain` / non-TTY) does not wait for the browser: it applies the
@@ -151,10 +155,13 @@ The report step stays last.
 | `QUIET_APPS=0` | `--no-manual-apps` |
 | `DEBUG=1` | `--debug` |
 | `UPDATETOOLS_ENABLED_FILE` | Override path for the saved enabled-step list. |
+| `AUTO_START=1` | `--yes` |
+| `UPDATETOOLS_DURATIONS_FILE` | Override `~/.config/updatetools/durations`, where each step's last run time is kept for the dashboard's time estimate. |
 | `NOTIFY_MODE=never` | `--no-notify` |
 | `NOTIFY_MODE=on_error` | `--notify-on-error` |
 | `UPDATETOOLS_CLOSE="a b"` | Force-close these cask apps to upgrade them now (space/comma list of tokens). |
-| `UPDATETOOLS_PROTECT="a b"` | Never close these cask apps. |
+| `UPDATETOOLS_PROTECT="a b"` | Never close these apps (cask tokens or bundle ids). |
+| `UPDATETOOLS_SAFE_RESTART="a b"` | Extra known-safe utilities (cask tokens or bundle ids) that may be restarted even with a regular window. Never overrides the terminal, risky-category or hosted-work checks. |
 | `BREW_CASK_SKIP="a b"` | Casks needing an interactive sudo password — kept out of the run and reported for manual upgrade (default `stats aldente`). |
 
 ## Apps installed from DMGs
@@ -171,11 +178,12 @@ download source. Apps that update themselves (Sparkle, Mozilla/Tor) or have no
 DMG provenance are left alone. If nothing needs a DMG update, the step reports
 that everything is already up to date.
 
-If the app is open, the verified bundle is staged beside it and a detached
+If the app is open and [safe to restart](#safe-to-restart), it is quit
+gracefully, swapped atomically and reopened in the background. Any other open
+app is never quit: the verified bundle is staged beside it and a detached
 one-shot helper waits for the user to close it naturally. The helper then uses
-an APFS atomic directory swap and removes itself. It never sends Quit events,
-relaunches applications, controls windows, or moves the pointer. That case is
-reported as **staged** (not done) until the swap applies.
+an APFS atomic directory swap and removes itself. That case is reported as
+**staged** (not done) until the swap applies.
 
 ## Deciding which apps to close
 
@@ -188,7 +196,7 @@ acts per verdict:
 | Verdict | When | Action |
 |---------|------|--------|
 | **upgrade** | app installed but **not running** | upgrade in place — nobody's using it |
-| **close** | app running **and provably safe to quit** | graceful quit → upgrade → relaunch |
+| **close** | app running **and safe to restart** (see below) | graceful quit → upgrade → relaunch in the background |
 | **protect** | app running but unsafe to close | stage with `--no-quit`; applies on next launch |
 | **skip (manual)** | needs an interactive sudo password (`BREW_CASK_SKIP`) | reported, not touched |
 | **broken** | app missing from `/Applications` and an interrupted upgrade left its backup in the Caskroom (every `brew upgrade` fails) | `brew reinstall --cask` |
@@ -203,13 +211,41 @@ An app is **protected** (never closed) when it is any of:
   recording apps, password managers, backup tools;
 - listed in **`UPDATETOOLS_PROTECT`**.
 
-Because the unsaved-changes probe fails safe, **`close` is deliberately rare** —
-in practice it only fires for scriptable apps with a clean document model, or for
-apps you explicitly force with **`UPDATETOOLS_CLOSE`**. Nothing is ever
-force-killed: if a graceful quit doesn't complete (e.g. a save dialog appears),
-the cask falls back to staging. Pass `--no-close` to disable closing entirely.
-Protected / deferred updates show as **staged** in the step status, not as a
-successful update of the running process.
+### Safe to restart
+
+Some apps hold nothing that a restart could lose, but cannot answer the
+unsaved-changes probe (menu-bar utilities have no documents, so the probe fails
+and would protect them forever). `updatetools` detects these itself. A running
+app is **restarted** when all of these hold:
+
+- it is not the hosting terminal, not in `UPDATETOOLS_PROTECT`, and not in a
+  risky category — matched by cask token **and** bundle id (terminals, password
+  managers, VPN/network clients, backup/sync, meeting/recording apps, browsers,
+  editors, VMs, Apple apps);
+- it hosts no work: every child process runs from inside its own bundle (an
+  agent running a shell, a script or a VM stays protected);
+- it is a **menu-bar or background agent** (`LSUIElement` / `LSBackgroundOnly`,
+  or LaunchServices type `UIElement` / `BackgroundOnly`) **with no document
+  model** that declares no microphone or camera use (`NSMicrophoneUsageDescription`
+  / `NSCameraUsageDescription`: dictation, recording and capture tools can be
+  mid-capture) — or it is on the curated list of known-safe utilities (Rectangle,
+  Raycast, Alfred, Hidden Bar, Ice, Bartender, AltTab, Stats, MonitorControl,
+  Maccy, AlDente) or in `UPDATETOOLS_SAFE_RESTART`.
+
+Ordinary windowed apps are never restarted by this rule. The restart is a
+standard Quit request, the update, then `open -g` from the app's own path
+(`-j` too for menu-bar agents, so nothing comes to the front). The tool then
+waits up to ten seconds for the app to be running again; if it is not, the step
+fails with "relaunch failed" instead of counting a restart. The same rule
+applies to open App Store apps and to DMG apps.
+
+Apps that pass neither the safe-restart rule nor the unsaved-changes probe stay
+protected. **`UPDATETOOLS_CLOSE`** forces a close for anything except the
+hosting terminal. Nothing is ever force-killed: if a graceful quit doesn't
+complete (e.g. a save dialog appears), the app keeps running and the update is
+staged. Pass `--no-close` to disable closing entirely. Protected / deferred
+updates show as **staged** in the step status and report; restarted ones are
+marked **restarted**, because the running app is already on the new version.
 
 An auto-updating app often installs its own update before Homebrew sees it, so
 brew still lists the cask as outdated. When the installed bundle already reports
@@ -230,23 +266,42 @@ report to the Desktop as a self-contained HTML file.
 ## The dashboard
 
 The run has no terminal UI. It serves a page on `127.0.0.1` (random port), opens
-it in your default browser, and prints nothing. The page shows every step with a
-toggle before the run, waits for you to press Start, then shows live progress with
-per-step durations and the version diff at the end. The timeline at the top
-shows only steps that ran or are still to run; skipped steps stay in the list
-below with their reason. Hovering a step previews that
-step's output, and clicking it keeps the output open to read or copy. When steps
-fail, the page leads with why: the error line from each failed step's own
-output, with steps that failed for the same reason grouped together. Passwords are asked for **in the page** — nothing is echoed as
+it in your default browser, and prints one summary line in the terminal when the
+run is over. The page has the sources on the left and the work on the right:
+
+- **Before the run** it checks, read-only and in the background, what Homebrew
+  (and `mas`, when installed) would update, and lists each item with its old and
+  new version and its plan: **Restarts** (an open app that is safe to restart),
+  **Checks first** (open; restarted only if it reports no unsaved work),
+  **Waits for quit** (open and protected, with the reason), **Installs**,
+  **Record only** (the app already updated itself) or **Manual**. The check
+  never asks an app anything, so it cannot raise an Automation prompt. Sources
+  without a cheap check are named as "checked as they run".
+- **During the run** the header says what is running, how many sources are done
+  and, from the durations of earlier runs, about how long is left. The right side
+  follows the running step's output live; click any source to read its output.
+- **After the run** the page leads with what needs attention: each failed
+  step's own error line (steps that failed for the same reason are grouped),
+  with **Retry failed** to run only those steps again while every other result
+  stays. Then the apps that wait for you to quit, then everything that was
+  updated, with release notes where known.
+
+Light, dark or system appearance is a switch in the header. Passwords are asked for **in the page** — nothing is echoed as
 you type — and the answer goes straight to `sudo`. If the keyboard is not the
 language that password was accepted in (English until one succeeds), the reveal
 control closes and the sheet says which language is on instead. If a required
-password is rejected, the run aborts before any step starts.
+password is rejected (three tries, or the prompt is cancelled), no step starts
+and nothing is changed; the page offers **Try again**, which asks for it once
+more without restarting the tool. If the password is rejected when you press
+**Retry failed**, nothing runs again and the header says so.
 
 Access is locked down: loopback only, a random per-run token exchanged for an
 `HttpOnly` cookie (everything else is `403`), a `Host` check against DNS
 rebinding, and the token handed to the server through a `0600` file rather than
-argv. Closing the tab ends the run's server, and with it the run.
+argv. Closing the tab ends the run's server, and with it the run: once the run
+is over the page tells the server at once; before that, the server waits 75
+seconds without a request (browsers wake a long-hidden tab only about once a
+minute, so a shorter limit could end a run's dashboard in a background tab).
 
 The log and HTML report live in a temp dir that goes away when the run ends.
 A deferred DMG update temporarily leaves its verified staged app and one-shot
@@ -265,7 +320,7 @@ Pass `--debug` to keep the log and report.
   command to install them when you are ready: `sudo softwareupdate -i -a -R`.
 - A UTF-8 locale is forced internally so the dashboard always aligns.
 - The report needs `jq` (ships with macOS) for vendor names and site icons;
-  without it, names fall back to the package token and logos to a monogram.
+  without it, names fall back to the package token and logos to a package glyph.
 
 ## Requirements
 
