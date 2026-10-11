@@ -2612,145 +2612,204 @@ document.documentElement.dataset.phase = 'choose';
 WEB_HTML_HEAD
   ut_ui_css
   cat <<'WEB_HTML_BODY'
-  html,body{height:100%}
-  body{overflow:hidden}
-  .app{display:grid; grid-template-rows:auto 1fr; height:100vh; height:100dvh}
-
-  /* ── header: what is happening, and the one action ─────────────────────── */
-  .bar{
-    position:relative; display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:14px;
-    padding:14px 20px 16px; background:var(--surface); border-bottom:1px solid var(--line);
+  /* ── the page is a desk; the dashboard is one small Mac window on it ───── */
+  :root{
+    --desk:light-dark(#e3e3e6,#0b0b0c);
+    --win:light-dark(#f4f4f6,#1d1d1f);
+    --group:light-dark(#ffffff,#2a2a2d);
+    --group-hover:light-dark(#f4f4f6,#313134);
+    --group-press:light-dark(#ececef,#38383c);
+    --sep:light-dark(rgb(0 0 0 / .085),rgb(255 255 255 / .075));
+    --edge:light-dark(rgb(0 0 0 / .1),rgb(255 255 255 / .06));
+    --accent:light-dark(#007aff,#0a84ff);
+    --tile-mono:light-dark(#f1f1f4,#3b3b3f);
+    --spring:cubic-bezier(.25,.9,.3,1);
   }
-  .mark{width:34px; height:34px; border-radius:9px; display:grid; place-items:center; background:var(--btn); color:var(--btn-ink)}
-  .mark svg{width:19px; height:19px}
-  html[data-phase=run] .mark svg{animation:turn 2.4s linear infinite}
+  html,body{height:100%}
+  body{
+    overflow:hidden; display:grid; place-items:center; font-size:13px;
+    background:radial-gradient(120% 80% at 50% 0%,light-dark(#ececef,#161618),var(--desk) 70%) var(--desk);
+  }
+  .app{
+    position:relative; width:min(500px,calc(100vw - 48px)); height:min(820px,calc(100dvh - 56px));
+    display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; overflow:hidden;
+    background:var(--win); border-radius:12px;
+    box-shadow:0 0 0 .5px light-dark(rgb(0 0 0 / .2),rgb(255 255 255 / .14)),
+      inset 0 .5px 0 light-dark(rgb(255 255 255 / .9),rgb(255 255 255 / .07)),
+      0 24px 64px -16px light-dark(rgb(0 0 0 / .3),rgb(0 0 0 / .8)),
+      0 4px 14px light-dark(rgb(0 0 0 / .06),rgb(0 0 0 / .45));
+    animation:win-in .24s var(--spring) both;
+  }
+  @keyframes win-in{from{opacity:0; transform:translateY(8px) scale(.988)}}
+
+  /* ── title bar: what is happening ──────────────────────────────────────── */
+  .bar{grid-row:1; display:flex; align-items:center; gap:10px; padding:11px 12px 10px 14px; border-bottom:.5px solid var(--sep); min-width:0}
+  .bar .mark{
+    width:30px; height:30px; flex:none; border-radius:8px; display:grid; place-items:center; color:#fff;
+    background:linear-gradient(180deg,#53a7ff,#0a6cf0);
+    box-shadow:inset 0 0 0 .5px rgb(0 0 0 / .15), inset 0 1px 0 rgb(255 255 255 / .25), 0 1px 2px rgb(0 0 0 / .18);
+  }
+  .bar .mark svg{width:17px; height:17px}
+  html[data-phase=run] .bar .mark svg{animation:turn 2.4s linear infinite}
   @keyframes turn{to{transform:rotate(360deg)}}
-  .heading{min-width:0}
-  .heading h1{font-size:19px; line-height:1.25; font-weight:650; letter-spacing:-.017em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-  .heading p{margin:1px 0 0; font-size:13px; color:var(--ink-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .heading{flex:1; min-width:0}
+  .heading h1{font:600 13.5px/1.25 var(--font); letter-spacing:-.008em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .heading p{margin:1px 0 0; font-size:11.5px; line-height:1.3; color:var(--ink-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums}
   .heading p b{font-weight:600; color:var(--ink)}
   .heading p.lost{color:var(--red); white-space:normal}
-  .actions{display:flex; align-items:center; gap:10px}
-  .go-btn{height:34px; padding:0 14px 0 16px; border-radius:9px; font-size:14px; font-weight:600; gap:10px}
-  .go-btn kbd{font:500 11.5px var(--font); opacity:.62; letter-spacing:.04em}
-  html:not([data-phase=choose]) #start-run{display:none}
-  #retry-run{display:none}
-  html[data-phase=done] #retry-run.on,html[data-phase=error] #retry-run.on{display:inline-flex}
 
-  .theme-switch{display:flex; padding:2px; border-radius:8px; background:var(--surface-2); border:1px solid var(--line)}
-  .theme-switch button{width:26px; height:24px; display:grid; place-items:center; border:0; background:none; border-radius:6px; color:var(--ink-3); cursor:pointer}
-  .theme-switch button svg{width:14px; height:14px}
+  .theme-switch{display:flex; flex:none; padding:2px; border-radius:7px; background:light-dark(rgb(0 0 0 / .055),rgb(255 255 255 / .07))}
+  .theme-switch button{width:24px; height:20px; display:grid; place-items:center; border:0; background:none; border-radius:5px; color:var(--ink-3); cursor:pointer; transition:color .12s var(--ease)}
+  .theme-switch button svg{width:12.5px; height:12.5px}
   .theme-switch button:hover{color:var(--ink)}
-  .theme-switch button[aria-checked=true]{background:var(--surface); color:var(--ink); box-shadow:var(--shadow)}
+  .theme-switch button[aria-checked=true]{background:light-dark(#fff,#5a5a5f); color:var(--ink); box-shadow:0 .5px 1.5px rgb(0 0 0 / .2)}
 
-  /* progress: one segment per selected source, sized by its time */
-  .ribbon{position:absolute; left:20px; right:20px; bottom:-2px; height:4px; display:flex; gap:3px}
-  html[data-phase=choose] .ribbon{opacity:0}
-  .seg{flex:1 1 0; min-width:6px; border-radius:2px; background:var(--surface-3); transition:flex-grow .6s var(--ease), background-color .3s var(--ease)}
-  .seg.run{background:linear-gradient(90deg,var(--blue) 0 40%,color-mix(in oklab,var(--blue) 35%,var(--surface-3)) 60% 100%); background-size:250% 100%; animation:flow 1.4s linear infinite}
+  /* progress: a hairline under the title bar, one segment per source */
+  .ribbon{grid-row:2; display:flex; gap:1px; height:3px; background:var(--sep)}
+  html[data-phase=choose] .ribbon{display:none}
+  .seg{flex:1 1 0; min-width:4px; background:light-dark(rgb(0 0 0 / .06),rgb(255 255 255 / .06)); transition:flex-grow .5s var(--ease), background-color .25s var(--ease)}
+  .seg.run{background:linear-gradient(90deg,var(--accent) 0 40%,color-mix(in oklab,var(--accent) 30%,transparent) 60% 100%); background-size:250% 100%; animation:flow 1.4s linear infinite}
   @keyframes flow{from{background-position:100% 0}to{background-position:-150% 0}}
   .seg.done{background:var(--green)}
   .seg.staged{background:var(--amber)}
   .seg.fail{background:var(--red)}
   .seg.skip{background:var(--line-2)}
 
-  /* ── body: sources on the left, the plan / log / result on the right ───── */
-  .body{display:grid; grid-template-columns:minmax(260px,320px) 1fr; min-height:0}
-  .sources{border-right:1px solid var(--line); overflow:auto; padding:14px 10px 24px; background:var(--surface-2)}
-  .side-head{display:flex; align-items:center; justify-content:space-between; padding:2px 10px 8px}
-  .side-head h2,.pane h2{font-size:13px; font-weight:600; color:var(--ink-2); letter-spacing:0}
-  .link-btn{border:0; background:none; padding:2px 4px; font-size:12.5px; font-weight:500; color:var(--blue); cursor:pointer; border-radius:4px}
+  /* ── the window body: a list, and a pushed detail view ─────────────────── */
+  .stage{grid-row:3; position:relative; overflow:hidden; min-height:0}
+  .view{position:absolute; inset:0; overflow:auto; overscroll-behavior:contain; background:var(--win); transition:transform .25s var(--spring), opacity .25s var(--spring)}
+  .detail-v{transform:translateX(100%); box-shadow:-.5px 0 0 var(--sep), -14px 0 28px -18px rgb(0 0 0 / .35); visibility:hidden; transition:transform .25s var(--spring), visibility 0s linear .25s}
+  html[data-nav=detail] .detail-v{transform:none; visibility:visible; transition:transform .25s var(--spring), visibility 0s}
+  html[data-nav=detail] .list-v{transform:translateX(-24%); opacity:.35}
+  .list-in{padding:12px 12px 16px}
+
+  .sect-head{display:flex; align-items:baseline; justify-content:space-between; padding:2px 8px 6px}
+  .sect-head h2,.block-head h2{font:600 11.5px/1.3 var(--font); color:var(--ink-3); letter-spacing:.01em}
+  .link-btn{border:0; background:none; padding:1px 3px; font:500 12px var(--font); color:var(--accent); cursor:pointer; border-radius:4px}
   .link-btn:hover{text-decoration:underline; text-underline-offset:.2em}
   html:not([data-phase=choose]) #select-all{display:none}
 
-  .steps{display:flex; flex-direction:column; gap:1px}
-  .step{
-    display:grid; grid-template-columns:18px 22px 1fr auto; align-items:center; column-gap:10px;
-    min-height:46px; padding:6px 10px; border-radius:8px; cursor:pointer; user-select:none;
-    transition:background-color .12s var(--ease);
-  }
-  .step:hover{background:var(--surface-3)}
-  .step[aria-current=true]{background:var(--surface); box-shadow:var(--shadow), inset 0 0 0 1px var(--line)}
+  /* grouped list: one inset card, hairlines that start at the text */
+  .steps,.group{background:var(--group); border-radius:10px; box-shadow:0 0 0 .5px var(--edge), 0 .5px 1px light-dark(rgb(0 0 0 / .04),transparent); overflow:hidden}
+  .step{position:relative; display:flex; align-items:center; user-select:none; transition:background-color .1s var(--ease)}
+  .step + .step::before{content:""; position:absolute; top:0; right:0; left:76px; height:.5px; background:var(--sep)}
+  .step:hover{background:var(--group-hover)}
+  .step:active{background:var(--group-press)}
+  .hit{flex:1; min-width:0; display:grid; grid-template-columns:16px 28px minmax(0,1fr) auto; align-items:center; column-gap:10px; min-height:46px; padding:7px 12px; cursor:default; border-radius:0}
+  .hit:focus-visible{outline:2px solid var(--focus); outline-offset:-2px; border-radius:10px}
+  html:not([data-phase=choose]) .hit{grid-template-columns:16px 28px minmax(0,1fr) auto 8px}
   .step .label{min-width:0; display:flex; flex-direction:column}
-  .step .n{font-size:14px; font-weight:550; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-  .step .a{font-size:12px; color:var(--ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-  .step .a.tail{color:var(--blue)}
+  .step .n{font-size:13px; line-height:1.3; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .step .a{font-size:11.5px; line-height:1.35; color:var(--ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .step .a.tail{color:var(--accent); font-family:var(--mono); font-size:10.5px}
   .step .a.why{color:var(--red)}
-  .step .side{font-size:12px; color:var(--ink-3); font-variant-numeric:tabular-nums; white-space:nowrap}
-  .step .side .chip{height:19px; font-size:11px}
-  .step.off .logo,.step.off .label{opacity:.45}
-  .step.skip .logo,.step.skip .label{opacity:.55}
+  .step .side{font-size:11.5px; color:var(--ink-3); font-variant-numeric:tabular-nums; white-space:nowrap}
+  .step .side .chip,.disclose .chip{height:18px; padding:0 6px; font-size:11px; border-radius:9px}
+  .chev{display:grid; place-items:center; color:var(--ink-3); opacity:.7}
+  .chev svg{width:8px; height:12px}
+  .step.off .logo,.step.off .label{opacity:.42}
+  .step.skip .logo,.step.skip .label{opacity:.5}
+  .disclose{flex:none; display:inline-flex; align-items:center; gap:6px; margin-right:8px; height:28px; padding:0 6px 0 8px; border:0; border-radius:7px; background:none; color:var(--ink-3); font:500 11.5px var(--font); cursor:pointer}
+  .disclose:hover{background:var(--group-press); color:var(--ink-2)}
+  .disclose svg.c{width:7px; height:11px; opacity:.7}
 
-  /* choose: a real checkbox look on a row-sized target */
-  .tick{width:16px; height:16px; border-radius:4.5px; border:1.5px solid var(--line-2); display:grid; place-items:center; background:var(--surface); transition:background-color .12s var(--ease), border-color .12s var(--ease)}
-  .tick svg{width:11px; height:11px; opacity:0; color:var(--btn-ink)}
-  .step.on .tick{background:var(--btn); border-color:var(--btn)}
-  .step.on .tick svg{opacity:1}
-  /* run/done: status glyph in the same slot */
-  .st{width:18px; height:18px; display:grid; place-items:center}
+  /* a native checkbox */
+  .tick{width:16px; height:16px; border-radius:4.5px; display:grid; place-items:center; background:light-dark(#fff,rgb(255 255 255 / .1)); box-shadow:inset 0 0 0 1px light-dark(rgb(0 0 0 / .2),rgb(255 255 255 / .2)), 0 .5px 1px light-dark(rgb(0 0 0 / .08),transparent); transition:background-color .1s var(--ease), box-shadow .1s var(--ease)}
+  .tick svg{width:11px; height:11px; color:#fff; opacity:0; transform:scale(.6); transition:opacity .1s var(--ease), transform .14s var(--spring)}
+  .step.on .tick{background:var(--accent); box-shadow:inset 0 0 0 .5px rgb(0 0 0 / .12)}
+  .step.on .tick svg{opacity:1; transform:none}
+  /* run/done: the status glyph takes the checkbox slot */
+  .st{width:16px; height:16px; display:grid; place-items:center}
   .st svg{width:16px; height:16px}
   .step.done .st{color:var(--green)}
   .step.staged .st{color:var(--amber)}
   .step.fail .st{color:var(--red)}
-  .step.run .st{color:var(--blue)}
-  .step.run .st svg{animation:turn 1s linear infinite}
-  .step.pending .st,.step.skip .st{color:var(--ink-3)}
+  .step.run .st{color:var(--accent)}
+  .step.run .st svg{animation:turn .9s linear infinite}
+  .step.pending .st,.step.skip .st{color:var(--ink-3); opacity:.7}
 
-  .absent{margin:14px 10px 0; font-size:12px; color:var(--ink-3); line-height:1.5}
-  .absent b{font-weight:550; color:var(--ink-2)}
-  .side-foot{margin:18px 10px 0; padding-top:12px; border-top:1px solid var(--line); font-size:12px; color:var(--ink-3); line-height:1.5}
-  .side-foot kbd{font:500 11px var(--font); padding:1px 5px; border-radius:4px; border:1px solid var(--line-2); background:var(--surface)}
+  /* logos: a small tile tinted by the mark, so every mark reads on both themes */
+  .logo{position:relative; display:grid; place-items:center; width:28px; height:28px; flex:none; border-radius:7px; overflow:hidden}
+  .logo.brand{background:light-dark(color-mix(in oklab,var(--tint) 11%,#fff),color-mix(in oklab,var(--tint) 20%,#2e2e31)); box-shadow:inset 0 0 0 .5px light-dark(color-mix(in oklab,var(--tint) 22%,transparent),rgb(255 255 255 / .06))}
+  .logo.brand.mono{background:var(--tile-mono); box-shadow:inset 0 0 0 .5px light-dark(rgb(0 0 0 / .07),rgb(255 255 255 / .06))}
+  .logo svg{width:17px; height:17px; display:block}
+  .logo.img img{width:28px; height:28px; display:block; object-fit:contain}
+  .logo.letter{background:linear-gradient(180deg,hsl(var(--h) 72% 60%),hsl(var(--h) 70% 46%)); color:#fff; font:650 13.5px/1 var(--font-display); letter-spacing:-.02em; box-shadow:inset 0 0 0 .5px rgb(0 0 0 / .12), inset 0 1px 0 rgb(255 255 255 / .22)}
+  .logo.letter.ink{background:light-dark(#1d1d1f,#f2f2f4); color:light-dark(#fff,#1d1d1f)}
+
+  .absent,.side-foot{margin:10px 8px 0; font-size:11.5px; color:var(--ink-3); line-height:1.5}
+  .absent b{font-weight:600; color:var(--ink-2)}
+  .side-foot kbd{font:500 10.5px var(--font); padding:0 4px; border-radius:4px; box-shadow:inset 0 0 0 .5px var(--line-2); background:var(--group)}
+  .side-foot code{font:11px var(--mono)}
   html:not([data-phase=choose]) .side-foot{display:none}
 
-  .pane{overflow:auto; min-width:0}
-  .pane-in{max-width:1000px; padding:22px 28px 56px}
-  .block{margin-top:26px}
-  .block:first-child{margin-top:0}
-  .block-head{display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin:0 2px 8px}
-  .block-head h2{font-size:13px}
-  .block-head .count{font-size:12px; color:var(--ink-3); font-variant-numeric:tabular-nums}
-  .block-head .count.busy::before{content:""; display:inline-block; width:9px; height:9px; margin-right:6px; vertical-align:-1px; border:1.5px solid var(--line-2); border-top-color:var(--blue); border-radius:50%; animation:turn .8s linear infinite}
-  .group{background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--shadow), 0 0 0 1px var(--line); overflow:hidden}
-  .group > .row + .row{border-top:1px solid var(--line)}
-  .row{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,auto) 150px; align-items:center; gap:14px; padding:10px 14px; min-height:48px}
-  .row .who{min-width:0}
-  .row .who b{display:block; font-weight:550; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-  .row .who small{display:block; font-size:12px; color:var(--ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  /* ── done: the summary above the list ──────────────────────────────────── */
+  #summary:empty{display:none}
+  #summary{margin-bottom:18px}
+  .block + .block,.block + .files,.block + .note-p{margin-top:16px}
+  .block-head{display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:0 8px 6px}
+  .block-head .count{font-size:11.5px; color:var(--ink-3); font-variant-numeric:tabular-nums}
+  .block-head .count.busy::before{content:""; display:inline-block; width:8px; height:8px; margin-right:6px; vertical-align:-1px; border:1.5px solid var(--line-2); border-top-color:var(--accent); border-radius:50%; animation:turn .8s linear infinite}
+  .row{position:relative; display:grid; grid-template-columns:28px minmax(0,1fr) auto; align-items:center; column-gap:10px; padding:8px 12px; min-height:44px}
+  .row.bare{grid-template-columns:minmax(0,1fr) auto}
+  .group > .row + .row::before{content:""; position:absolute; top:0; right:0; left:50px; height:.5px; background:var(--sep)}
+  .group > .row.bare + .row.bare::before{left:12px}
+  .row .who{min-width:0; display:flex; flex-direction:column; gap:1px}
+  .row .who b{font-weight:500; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .row .who small{font-size:11.5px; color:var(--ink-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .row .ver{font-size:11px}
   .row .act{justify-self:end; display:flex; align-items:center; gap:8px}
-  .row .act a{font-size:12px; white-space:nowrap}
-  .empty-row{padding:14px; color:var(--ink-2); font-size:13px}
-  .note-p{margin:10px 2px 0; font-size:12.5px; color:var(--ink-3); line-height:1.55; max-width:68ch}
-  .note-p b{font-weight:550; color:var(--ink-2)}
+  .row .act .chip,.row .act .staged-note,.row .act .restarted-note{height:19px; font-size:11px; border-radius:9.5px}
+  .empty-row{padding:12px; color:var(--ink-2); font-size:12.5px}
+  .note-p{margin:10px 8px 0; font-size:11.5px; color:var(--ink-3); line-height:1.5}
+  .note-p b{font-weight:600; color:var(--ink-2)}
 
   /* attention: the failure, its own words, and what to do next */
-  .fail-card{background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--shadow), 0 0 0 1px color-mix(in oklab,var(--red) 30%,transparent); padding:14px 16px}
-  .fail-card + .fail-card{margin-top:10px}
-  .fail-card .who{display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; justify-content:space-between}
-  .fail-card .who b{flex:1 1 18ch; min-width:0; font-weight:600; color:var(--red); overflow-wrap:anywhere}
+  .fail-card{background:var(--group); border-radius:10px; box-shadow:0 0 0 .5px color-mix(in oklab,var(--red) 45%,transparent); padding:10px 12px 12px}
+  .fail-card + .fail-card{margin-top:8px}
+  .fail-card .who{display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; justify-content:space-between}
+  .fail-card .who b{flex:1 1 14ch; min-width:0; font-weight:600; color:var(--red); overflow-wrap:anywhere}
   .fail-card .tools{display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; min-width:0; max-width:100%}
   .fail-card .tools .btn{max-width:100%}
-  .fail-card pre{margin:10px 0 0; padding:10px 12px; border-radius:8px; background:var(--surface-2); font:12px/1.5 var(--mono); white-space:pre-wrap; word-break:break-word; color:var(--ink)}
-  .fail-card p{margin:8px 0 0; font-size:13px; color:var(--ink-2)}
+  .fail-card pre{margin:8px 0 0; padding:8px 10px; border-radius:7px; background:var(--red-bg); font:11.5px/1.5 var(--mono); white-space:pre-wrap; word-break:break-word; color:var(--ink)}
+  .fail-card p{margin:6px 0 0; font-size:12px; color:var(--ink-2)}
 
-  /* detail: one source's output */
-  .detail-head{display:flex; align-items:center; gap:12px; margin-bottom:14px}
-  .detail-head .logo{width:30px; height:30px}
-  .detail-head .logo svg,.detail-head .logo img{width:24px; height:24px}
-  .detail-head h2{font-size:17px; color:var(--ink); font-weight:650; letter-spacing:-.012em}
-  .detail-head p{margin:0; font-size:12.5px; color:var(--ink-3)}
+  .btn{height:24px; padding:0 9px; border-radius:6px; font-size:12px; gap:5px; border:0; background:light-dark(#fff,rgb(255 255 255 / .1)); box-shadow:0 0 0 .5px light-dark(rgb(0 0 0 / .16),rgb(255 255 255 / .1)), 0 .5px 1px light-dark(rgb(0 0 0 / .1),rgb(0 0 0 / .3))}
+  .btn:hover{background:light-dark(#f7f7f8,rgb(255 255 255 / .14))}
+  .btn:active{background:light-dark(#ececef,rgb(255 255 255 / .18))}
+  .btn svg{width:13px; height:13px}
+
+  /* ── detail: a pushed view with a back button ──────────────────────────── */
+  .nav{position:sticky; top:0; z-index:2; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; height:38px; padding:0 8px; background:color-mix(in oklab,var(--win) 82%,transparent); -webkit-backdrop-filter:blur(14px) saturate(1.6); backdrop-filter:blur(14px) saturate(1.6); border-bottom:.5px solid var(--sep)}
+  .back{justify-self:start; display:inline-flex; align-items:center; gap:3px; height:26px; padding:0 8px 0 4px; border:0; border-radius:6px; background:none; color:var(--accent); font:500 13px var(--font); cursor:pointer}
+  .back:hover{background:light-dark(rgb(0 0 0 / .05),rgb(255 255 255 / .07))}
+  .back svg{width:9px; height:14px}
+  .nav-title{font-weight:600; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:240px}
+  .nav .btn{justify-self:end}
+  .pane-body{padding:14px 12px 20px}
+  .detail-head{display:flex; align-items:center; gap:10px; padding:0 4px 12px}
+  .detail-head .logo{width:36px; height:36px; border-radius:9px}
+  .detail-head .logo svg{width:21px; height:21px}
+  .detail-head .logo.img img{width:36px; height:36px}
+  .detail-head .logo.letter{font-size:17px}
+  .detail-head h2{font:600 15px/1.25 var(--font); color:var(--ink); letter-spacing:-.01em}
+  .detail-head p{margin:1px 0 0; font-size:12px; color:var(--ink-3); font-variant-numeric:tabular-nums}
   .detail-head .grow{flex:1; min-width:0}
+  #pane-in{min-height:100%; display:flex; flex-direction:column}
+  .pane-body{flex:1; display:flex; flex-direction:column}
+  .pane-body > .block:has(.log){flex:1; display:flex; flex-direction:column; min-height:0}
   .log{
-    position:relative; min-height:180px; max-height:min(62vh,640px); overscroll-behavior:contain; background:var(--surface); border-radius:var(--r-lg); box-shadow:var(--shadow), 0 0 0 1px var(--line);
-    padding:12px 0; overflow:auto;
+    flex:1; position:relative; min-height:140px; max-height:min(64dvh,600px); overscroll-behavior:contain;
+    background:var(--group); border-radius:10px; box-shadow:0 0 0 .5px var(--edge); padding:10px 0; overflow:auto;
   }
-  .log-md{font:12px/1.6 var(--mono); color:var(--ink-2); counter-reset:ln}
-  .ln{display:block; padding:0 16px; white-space:pre-wrap; word-break:break-word}
-  .ln.gap{height:.8em}
+  .log-md{font:11.5px/1.6 var(--mono); color:var(--ink-2)}
+  .ln{display:block; padding:0 12px; white-space:pre-wrap; word-break:break-word}
+  .ln.gap{height:.7em}
   .ln.cmt{color:var(--ink-3)}
   .ln.err{color:var(--red); background:var(--red-bg)}
   .ln.ok{color:var(--green)}
   .ln.act{color:var(--ink)}
-  .ln.ver{display:grid; grid-template-columns:var(--pkg-w,18ch) 1fr; gap:12px}
+  .ln.ver{display:grid; grid-template-columns:var(--pkg-w,18ch) 1fr; gap:10px}
   .ln.ver .pkg{color:var(--ink); overflow:hidden; text-overflow:ellipsis}
   .ln.ver .old{color:var(--ink-3)}
   .ln.ver .arr{margin:0 6px; color:var(--ink-3)}
@@ -2758,68 +2817,72 @@ WEB_HTML_HEAD
   .ln.ver em{font-style:normal; font-weight:650}
   .ln.ver .tag{margin-left:8px; color:var(--amber)}
 
-  .files{margin-top:26px; display:flex; flex-direction:column; gap:8px}
-  .file{display:grid; grid-template-columns:52px 1fr auto; gap:10px; align-items:center; font-size:12.5px}
+  .files{display:flex; flex-direction:column; gap:6px; padding:0 4px}
+  .files:empty{display:none}
+  .file{display:grid; grid-template-columns:44px minmax(0,1fr) auto; gap:8px; align-items:center; font-size:12px}
   .file .k{color:var(--ink-3)}
-  .file .p{font-family:var(--mono); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .file .p{font-family:var(--mono); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .file .act{display:flex; gap:6px}
-  .logbox pre{margin:10px 0 0; max-height:50vh; overflow:auto; padding:12px; border-radius:var(--r); background:var(--surface); box-shadow:0 0 0 1px var(--line); font:11.5px/1.55 var(--mono)}
+  .logbox pre{margin:10px 0 0; max-height:40dvh; overflow:auto; padding:10px; border-radius:10px; background:var(--group); box-shadow:0 0 0 .5px var(--edge); font:11px/1.55 var(--mono)}
 
-  /* first paint: rows arrive once, quickly, then never re-animate */
-  .steps:not(.ready) .step{animation:rise .32s var(--ease) both; animation-delay:calc(var(--i,0) * 18ms)}
-  .pane-in.swap{animation:rise .26s var(--ease) both}
-  @keyframes rise{from{opacity:0; transform:translateY(4px)}}
+  /* ── bottom bar: the one action ────────────────────────────────────────── */
+  .dock{grid-row:4; display:flex; align-items:center; gap:8px; padding:10px 12px 10px 16px; border-top:.5px solid var(--sep); background:var(--win)}
+  html[data-phase=run] .dock,html[data-phase=done] .dock:not(:has(#retry-run.on)),html[data-phase=error] .dock:not(:has(#retry-run.on)){display:none}
+  .dock-note{flex:1; min-width:0; font-size:12px; color:var(--ink-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums}
+  .dock-note b{color:var(--ink); font-weight:600}
+  .btn.go-btn,#retry-run.on{height:28px; padding:0 10px 0 13px; border-radius:7px; border:0; font-size:13px; font-weight:500; gap:9px; background:var(--accent); color:#fff; box-shadow:inset 0 .5px 0 rgb(255 255 255 / .22), 0 0 0 .5px rgb(0 0 0 / .12), 0 1px 2px rgb(0 0 0 / .18)}
+  .btn.go-btn:hover,#retry-run.on:hover{background:color-mix(in oklab,var(--accent) 90%,#fff)}
+  .btn.go-btn:active,#retry-run.on:active{background:color-mix(in oklab,var(--accent) 88%,#000)}
+  .btn.go-btn:disabled{background:light-dark(rgb(0 0 0 / .06),rgb(255 255 255 / .08)); color:var(--ink-3); box-shadow:none; opacity:1}
+  .go-btn kbd{font:500 11px var(--font); opacity:.7; letter-spacing:.04em}
+  html:not([data-phase=choose]) #start-run{display:none}
+  #retry-run{display:none}
+  #retry-run.on{padding:0 13px 0 11px; gap:6px}
+  html[data-phase=done] #retry-run.on,html[data-phase=error] #retry-run.on{display:inline-flex}
 
   /* ── password sheet ─────────────────────────────────────────────────────── */
-  .scrim{position:fixed; inset:0; display:none; place-items:center; padding:20px; background:light-dark(rgb(20 20 22 / .28),rgb(0 0 0 / .55)); z-index:10}
+  .scrim{position:fixed; inset:0; display:none; place-items:center; padding:20px; background:light-dark(rgb(20 20 22 / .22),rgb(0 0 0 / .5)); z-index:10}
   .scrim.on{display:grid; animation:fade .18s var(--ease)}
   @keyframes fade{from{opacity:0}}
-  .sheet{width:min(400px,100%); background:var(--surface); border-radius:16px; box-shadow:var(--shadow-pop), 0 0 0 1px var(--line); padding:20px; animation:pop .24s var(--ease)}
-  @keyframes pop{from{opacity:0; transform:translateY(6px) scale(.985)}}
+  .sheet{width:min(380px,100%); background:var(--win); border-radius:12px; box-shadow:var(--shadow-pop), 0 0 0 .5px light-dark(rgb(0 0 0 / .2),rgb(255 255 255 / .14)); padding:18px; animation:pop .22s var(--spring)}
+  @keyframes pop{from{opacity:0; transform:translateY(-6px) scale(.985)}}
   .sheet-head{display:flex; align-items:center; gap:12px}
-  .sheet-head .lock{width:36px; height:36px; border-radius:10px; display:grid; place-items:center; background:var(--surface-3); color:var(--ink-2); flex:none}
-  .sheet-head .lock svg{width:18px; height:18px}
-  .sheet-head h2{font-size:15px; font-weight:650}
-  .sheet-head p{margin:1px 0 0; font-size:12.5px; color:var(--ink-3)}
-  .info-tip{margin:14px 0 0; font-size:12.5px; line-height:1.5; color:var(--ink-2)}
+  .sheet-head .lock{width:34px; height:34px; border-radius:9px; display:grid; place-items:center; background:var(--tile-mono); color:var(--ink-2); flex:none}
+  .sheet-head .lock svg{width:17px; height:17px}
+  .sheet-head h2{font:600 14px/1.3 var(--font)}
+  .sheet-head p{margin:1px 0 0; font-size:12px; color:var(--ink-3)}
+  .info-tip{margin:12px 0 0; font-size:12px; line-height:1.5; color:var(--ink-2)}
   .info{display:none}
   .pw-decoy{position:absolute; width:1px; height:1px; overflow:hidden; opacity:0; pointer-events:none}
-  .pw-row{display:flex; gap:8px; margin-top:16px}
+  .pw-row{display:flex; gap:8px; margin-top:14px}
   .pw-field{flex:1; position:relative; min-width:0}
   .pw{
-    height:38px; padding:0 40px 0 12px; border-radius:9px; border:1px solid var(--line-2); background:var(--surface-2);
-    font:15px/36px var(--font); letter-spacing:.12em; white-space:nowrap; overflow:hidden; outline:none; cursor:text; caret-color:var(--blue);
+    height:32px; padding:0 36px 0 10px; border-radius:7px; border:0; background:var(--group); box-shadow:inset 0 0 0 .5px var(--line-2);
+    font:14px/32px var(--font); letter-spacing:.12em; white-space:nowrap; overflow:hidden; outline:none; cursor:text; caret-color:var(--accent);
   }
-  .sheet.reveal .pw{letter-spacing:.01em; font-family:var(--mono); font-size:14px}
-  .pw:focus{border-color:var(--focus); box-shadow:0 0 0 3px color-mix(in oklab,var(--focus) 22%,transparent)}
-  .eye{position:absolute; right:4px; top:4px; width:30px; height:30px; border:0; background:none; color:var(--ink-3); border-radius:6px; cursor:pointer; display:grid; place-items:center}
-  .eye svg{width:17px; height:17px}
+  .sheet.reveal .pw{letter-spacing:.01em; font-family:var(--mono); font-size:13px}
+  .pw:focus{box-shadow:inset 0 0 0 .5px var(--line-2), 0 0 0 3px color-mix(in oklab,var(--focus) 35%,transparent)}
+  .eye{position:absolute; right:3px; top:3px; width:26px; height:26px; border:0; background:none; color:var(--ink-3); border-radius:5px; cursor:pointer; display:grid; place-items:center}
+  .eye svg{width:16px; height:16px}
   .eye .off{display:none}
   .sheet.reveal .eye .on{display:none}
   .sheet.reveal .eye .off{display:block}
   .eye:disabled{opacity:.35; cursor:default}
-  .go{width:38px; height:38px; border-radius:9px; border:0; background:var(--btn); color:var(--btn-ink); display:grid; place-items:center; cursor:pointer}
-  .go svg{width:17px; height:17px}
-  .layout-note{margin:10px 0 0; padding:8px 10px; border-radius:8px; font-size:12.5px; background:var(--amber-bg); color:var(--amber)}
-  .layout-note.in{animation:rise .2s var(--ease)}
-  .sheet.wrong-layout .pw{border-color:color-mix(in oklab,var(--amber) 60%,transparent)}
+  .go{width:32px; height:32px; border-radius:7px; border:0; background:var(--accent); color:#fff; display:grid; place-items:center; cursor:pointer}
+  .go svg{width:16px; height:16px}
+  .layout-note{margin:10px 0 0; padding:7px 10px; border-radius:7px; font-size:12px; background:var(--amber-bg); color:var(--amber)}
+  .layout-note.in{animation:pop .2s var(--spring)}
+  .sheet.wrong-layout .pw{box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--amber) 60%,transparent)}
 
-  /* ── narrow windows: one column, sources become a compact list on top ─── */
-  @media (max-width:820px){
-    body{overflow:auto}
-    .app{display:block; height:auto}
-    .bar{position:sticky; top:0; z-index:5; grid-template-columns:auto 1fr; padding:12px 14px 14px}
-    .actions{grid-column:1 / -1; justify-content:space-between}
-    .go-btn{flex:1; justify-content:center}
-    .ribbon{left:14px; right:14px}
-    .body{display:block}
-    .sources{border-right:0; border-bottom:1px solid var(--line); padding:10px 6px 14px}
-    .pane{overflow:visible}
-    .pane-in{padding:18px 14px 40px}
-    .row{grid-template-columns:minmax(0,1fr) auto; row-gap:6px}
-    .row .ver{grid-column:1; grid-row:2}
-    .row .act{grid-column:2; grid-row:1 / span 2}
-    .side-foot{display:none}
+  /* ── small screens: the window is the screen ───────────────────────────── */
+  @media (max-width:540px), (max-height:520px){
+    body{display:block}
+    .app{width:100%; height:100vh; height:100dvh; border-radius:0; box-shadow:none; animation:none}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .app{animation:none}
+    .view,.detail-v,html[data-nav=detail] .detail-v{transition:none}
+    html[data-nav=detail] .list-v{transform:none}
   }
 </style>
 </head>
@@ -2827,46 +2890,50 @@ WEB_HTML_HEAD
 <div class="app">
   <header class="bar">
     <div class="mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.6 4.5L20 16"/><path d="M20 20.5V16h-4.5"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.6 4.5L20 16"/><path d="M20 20.5V16h-4.5"/></svg>
     </div>
     <div class="heading">
       <h1 id="headline">updatetools</h1>
       <p id="phase" role="status" aria-live="polite">Starting…</p>
     </div>
-    <div class="actions">
-      <div class="theme-switch" role="radiogroup" aria-label="Theme">
-        <button type="button" role="radio" data-theme="light" aria-label="Light" title="Light">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M3 12h2M19 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
-        </button>
-        <button type="button" role="radio" data-theme="dark" aria-label="Dark" title="Dark">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
-        </button>
-        <button type="button" role="radio" data-theme="system" aria-label="Match the system" title="Match the system">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
-        </button>
-      </div>
-      <button type="button" class="btn" id="retry-run">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
-        <span id="retry-label">Retry failed</span>
+    <div class="theme-switch" role="radiogroup" aria-label="Theme">
+      <button type="button" role="radio" data-theme="light" aria-label="Light" title="Light">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M3 12h2M19 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
       </button>
-      <button type="button" class="btn primary go-btn" id="start-run" aria-keyshortcuts="Meta+Enter">
-        <span id="start-label">Update</span><kbd aria-hidden="true">⌘↩</kbd>
+      <button type="button" role="radio" data-theme="dark" aria-label="Dark" title="Dark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+      </button>
+      <button type="button" role="radio" data-theme="system" aria-label="Match the system" title="Match the system">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
       </button>
     </div>
-    <div class="ribbon" id="ribbon" aria-hidden="true"></div>
   </header>
-  <div class="body">
-    <aside class="sources" aria-label="Sources">
-      <div class="side-head">
-        <h2 id="sources-title">Sources</h2>
-        <button type="button" class="link-btn" id="select-all">Select all</button>
+  <footer class="dock">
+    <span class="dock-note" id="dock-note"></span>
+    <button type="button" class="btn" id="retry-run">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+      <span id="retry-label">Retry failed</span>
+    </button>
+    <button type="button" class="btn primary go-btn" id="start-run" aria-keyshortcuts="Meta+Enter">
+      <span id="start-label">Update</span><kbd aria-hidden="true">⌘↩</kbd>
+    </button>
+  </footer>
+  <div class="ribbon" id="ribbon" aria-hidden="true"></div>
+  <div class="stage" id="stage">
+    <section class="view list-v" id="list-view" aria-label="Sources">
+      <div class="list-in">
+        <div id="summary"></div>
+        <div class="sect-head">
+          <h2 id="sources-title">Sources</h2>
+          <button type="button" class="link-btn" id="select-all">Select all</button>
+        </div>
+        <div class="steps" id="steps" role="list" aria-labelledby="sources-title"></div>
+        <p class="absent" id="absent" hidden></p>
+        <p class="side-foot">Your selection is remembered. <kbd>⌘</kbd> <kbd>↩</kbd> starts. <code>updatetools --yes</code> starts without this screen.</p>
       </div>
-      <div class="steps" id="steps" role="list" aria-labelledby="sources-title"></div>
-      <p class="absent" id="absent" hidden></p>
-      <p class="side-foot">Your selection is remembered. <kbd>⌘</kbd> <kbd>↩</kbd> starts. <code>updatetools --yes</code> starts without this screen.</p>
-    </aside>
-    <main class="pane" id="pane">
-      <div class="pane-in" id="pane-in"></div>
+    </section>
+    <main class="view detail-v pane" id="pane" inert>
+      <div id="pane-in"></div>
     </main>
   </div>
 </div>
@@ -2919,20 +2986,28 @@ WEB_HTML_BODY
   const $ = (id) => document.getElementById(id);
   const root = document.documentElement;
 
-  // Near-black brand marks disappear on the dark plate; tag them once so the
-  // theme can re-ink them instead of shipping a second sprite.
-  function inkDark(hex) {
-    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
-    if (!m) return false;
-    const [r, g, b] = [0, 2, 4].map((i) => {
-      const c = parseInt(m[1].slice(i, i + 2), 16) / 255;
-      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-    });
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.05;
+  // Every brand mark sits on a small tile tinted by its own colour. Marks that
+  // would vanish on a theme's tile (black ones on dark, pale ones on light) get
+  // a per-theme ink once, here, instead of a second sprite: neutral marks turn
+  // white on dark, coloured ones are lightened toward white.
+  const MARK = {};
+  function relLum(rgb) {
+    const [r, g, b] = rgb.map((v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   }
-  document.querySelectorAll('symbol path[fill]').forEach((p) => {
-    const hex = p.getAttribute('fill');
-    if (inkDark(hex)) p.style.fill = 'var(--mark-ink, ' + hex + ')';
+  const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  document.querySelectorAll('symbol').forEach((sym) => {
+    const p = sym.querySelector('path[fill]');
+    const m = p && /^#?([0-9a-f]{6})$/i.exec(p.getAttribute('fill') || '');
+    if (!m) return;
+    const hex = `#${m[1]}`;
+    const rgb = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+    const lum = relLum(rgb);
+    const mono = Math.max(...rgb) - Math.min(...rgb) < 48;
+    MARK[sym.id.slice(2)] = { hex, mono };
+    const light = contrast(lum, 0.9) < 1.8 ? `color-mix(in oklab, ${hex} 76%, black)` : hex;
+    const dark = contrast(lum, 0.035) >= 3 ? hex : mono ? '#f2f2f4' : `color-mix(in oklab, ${hex} 45%, white)`;
+    p.style.fill = `light-dark(${light}, ${dark})`;
   });
 
   const themeButtons = document.querySelectorAll('.theme-switch button');
@@ -2966,11 +3041,26 @@ WEB_HTML_BODY
     ext: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>',
   };
 
-  function logo(slug, img) {
-    if (img) return `<span class="logo"><img src="${img}" alt=""></span>`;
-    if (slug === 'applications' && window.UT_DMG_ICON) return `<span class="logo"><img src="${window.UT_DMG_ICON}" alt=""></span>`;
-    if (slug && document.getElementById('i-' + slug)) return `<span class="logo"><svg viewBox="0 0 24 24"><use href="#i-${slug}"/></svg></span>`;
-    return `<span class="logo glyph">${ICON.box}</span>`;
+  // A source's tile: its bundled mark, else its cached site icon, else a
+  // lettered tile in a colour of its own (never a generic placeholder).
+  const MARK_ALIAS = { macos: 'apple' };
+  const MARK_PREFER = { astral: 'uv' };   // the uv step shows uv's own mark
+  const LETTER_HUE = { vscode: 206, visualstudiocode: 206, antigravity: 228, codex: -1, codexcli: -1, report: -1 };
+  function logo(slug, img, name, key) {
+    if (img) return `<span class="logo img"><img src="${img}" alt=""></span>`;
+    if (slug === 'applications' && window.UT_DMG_ICON) return `<span class="logo img"><img src="${window.UT_DMG_ICON}" alt=""></span>`;
+    const id = [MARK_PREFER[slug], slug, MARK_ALIAS[slug], MARK_ALIAS[key]].find((x) => x && document.getElementById('i-' + x));
+    if (id) {
+      const mk = MARK[id] || { hex: '#888888', mono: true };
+      return `<span class="logo brand${mk.mono ? ' mono' : ''}" style="--tint:${mk.hex}"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-${id}"/></svg></span>`;
+    }
+    const word = String(name || key || slug || '?');
+    const ch = (word.match(/[A-Za-z0-9]/) || ['?'])[0].toUpperCase();
+    const k = key || slug || word;
+    let hue = LETTER_HUE[k] ?? LETTER_HUE[word.toLowerCase().replace(/[^a-z0-9]/g, '')];
+    if (hue == null) { hue = 0; for (const c of k) hue = (hue * 31 + c.charCodeAt(0)) % 360; }
+    return hue < 0 ? `<span class="logo letter ink" aria-hidden="true">${escapeHtml(ch)}</span>`
+      : `<span class="logo letter" style="--h:${hue}" aria-hidden="true">${escapeHtml(ch)}</span>`;
   }
   function prettyTail(raw) {
     const t = String(raw || '').replace(/\r/g, '').trim();
@@ -3044,7 +3134,7 @@ WEB_HTML_BODY
     (st.steps || []).forEach((s, i) => {
       if (s.slug === 'report' || s.key === 'report') return;
       if (st.phase === 'choose') { if (s.av !== false) out.push([s, i]); return; }
-      if (stepSelected(s, i, st.phase, null) && !(s.s === 'skip' && s.why === 'guard' && s.av === false)) out.push([s, i]);
+      if (stepSelected(s, i, st.phase, null) && !(s.av === false && (s.s === 'skip' || s.s === 'pending'))) out.push([s, i]);
     });
     return out;
   }
@@ -3084,23 +3174,26 @@ WEB_HTML_BODY
     const sorted = (items || []).slice().sort((a, b) => ((ACT[a.act] || ACT.update).order - (ACT[b.act] || ACT.update).order)
       || a.n.localeCompare(b.n));
     return sorted.map((it) => `
-      <div class="row">
-        <div class="who"><b>${escapeHtml(it.n)}</b>${it.why ? `<small>${escapeHtml(it.why)}</small>` : ''}</div>
-        ${versionMarkup(it.o, it.w)}
+      <div class="row bare">
+        <div class="who"><b>${escapeHtml(it.n)}</b>${it.o || it.w ? versionMarkup(it.o, it.w) : ''}${it.why ? `<small>${escapeHtml(it.why)}</small>` : ''}</div>
         <div class="act">${actChip(it.act)}</div>
       </div>`).join('');
   }
-  function planBlock(st, s) {
+  function planTally(p) {
+    const items = p.items || [];
+    const auto = items.filter((it) => it.act !== 'manual').length, manual = items.length - auto;
+    return [auto ? plural(auto, 'update', 'updates') : '', manual ? `${manual} manual` : ''].filter(Boolean).join(' · ');
+  }
+  function planBlock(st, s, title) {
     const p = planFor(st, s.key);
     if (!p) return '';
     const items = p.items || [];
-    const auto = items.filter((it) => it.act !== 'manual').length, manual = items.length - auto;
-    const tally = [auto ? plural(auto, 'update', 'updates') : '', manual ? `${manual} manual` : ''].filter(Boolean).join(' · ');
+    const tally = planTally(p);
     const count = !p.done ? `<span class="count busy">${tally ? `${tally} so far` : 'Checking'}</span>`
       : `<span class="count">${tally || 'Up to date'}</span>`;
     const body = items.length ? planRows(items)
       : `<div class="empty-row">${p.done ? 'Nothing outdated.' : 'Checking what is outdated…'}</div>`;
-    return `<section class="block"><div class="block-head"><h2>${escapeHtml(s.n)}</h2>${count}</div><div class="group">${body}</div></section>`;
+    return `<section class="block"><div class="block-head"><h2>${escapeHtml(title || s.n)}</h2>${count}</div><div class="group">${body}</div></section>`;
   }
 
   /* ── state ──────────────────────────────────────────────────────────────── */
@@ -3131,7 +3224,10 @@ WEB_HTML_BODY
       const { n, busy } = planCount(st);
       const on = sidebarRows(st).filter(([, i]) => isOn(i, st)).length;
       head = n ? `${plural(n, 'update', 'updates')} found` : busy ? 'Checking for updates…' : 'Ready to update';
-      sub = `${plural(on, 'source', 'sources')} selected` + (busy ? ' · still checking' : n ? ' · others are checked as they run' : '');
+      // The bottom bar counts the selection; this line says what is still being looked at.
+      const checking = sidebarRows(st).filter(([s, i]) => isOn(i, st) && planFor(st, s.key) && !planFor(st, s.key).done).map(([s]) => s.n);
+      sub = !on ? 'Nothing selected' : checking.length ? `Checking ${checking.join(' and ')}…`
+        : n ? 'The other sources are checked as they run' : 'Each source is checked as it runs';
       $('start-label').textContent = on ? 'Update' : 'Nothing selected';
       $('start-run').disabled = !on || startSent;
       document.title = n ? `updatetools · ${n} updates` : 'updatetools';
@@ -3184,26 +3280,38 @@ WEB_HTML_BODY
   }
   const glyphFor = (s) => ({ done: 'done', fail: 'fail', staged: 'wait', skip: 'skip', run: 'run' }[s.s] || 'pending');
   const stateWord = { done: 'done', fail: 'failed', staged: 'installed, waits for apps to quit', skip: 'skipped', run: 'running', pending: 'waiting' };
+  const CHEV = '<svg class="c" viewBox="0 0 8 13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m1.5 1.5 5 5-5 5"/></svg>';
+  // A row is a list item; its main part toggles (choose) or opens the source
+  // (run, done). In choose, a source with a pre-run plan gets a disclosure
+  // button beside the toggle that opens that plan.
   function stepMarkup(s, i, st) {
     const key = escapeHtml(s.key || s.slug || '');
+    const icon = logo(s.slug, s.img, s.n, s.key);
     if (st.phase === 'choose') {
       const on = isOn(i, st);
-      return `<div class="step ${on ? 'on' : 'off'}" data-key="${key}" data-i="${i}" role="checkbox" aria-checked="${on}" tabindex="0">
-        <span class="tick" aria-hidden="true">${ICON.check}</span>
-        ${logo(s.slug, s.img)}
-        <span class="label"><span class="n">${escapeHtml(s.n)}</span><span class="a">${escapeHtml(describe(s))}</span></span>
-        <span class="side">${sideNote(s, st)}</span>
+      const p = planFor(st, s.key);
+      const more = p ? `<button type="button" class="disclose" data-act="plan" data-key="${key}" aria-label="${escapeHtml(s.n)} plan">${sideNote(s, st)}${CHEV}</button>` : '';
+      return `<div class="step ${on ? 'on' : 'off'}" data-key="${key}" data-i="${i}" role="listitem">
+        <div class="hit" role="checkbox" aria-checked="${on}" tabindex="0">
+          <span class="tick" aria-hidden="true">${ICON.check}</span>
+          ${icon}
+          <span class="label"><span class="n">${escapeHtml(s.n)}</span><span class="a">${escapeHtml(describe(s))}</span></span>
+          <span class="side"></span>
+        </div>${more}
       </div>`;
     }
     const why = s.s === 'fail' && failReasons && failReasons[stepLabel(s)];
     const sub = s.s === 'run' ? `<span class="a tail">${escapeHtml(prettyTail(s.tail ?? st.tail) || describe(s))}</span>`
       : why ? `<span class="a why">${escapeHtml(why.split('\n')[0])}</span>`
       : `<span class="a">${escapeHtml(describe(s))}</span>`;
-    return `<div class="step ${s.s}" data-key="${key}" data-i="${i}" role="button" tabindex="0" aria-current="${view === s.key}">
-        <span class="st" aria-hidden="true">${ICON[glyphFor(s)]}</span>
-        ${logo(s.slug, s.img)}
-        <span class="label"><span class="n">${escapeHtml(s.n)}<span class="sr">, ${stateWord[s.s] || ''}</span></span>${sub}</span>
-        <span class="side">${sideNote(s, st)}</span>
+    return `<div class="step ${s.s}" data-key="${key}" data-i="${i}" role="listitem">
+        <div class="hit" role="button" tabindex="0" aria-current="${view === s.key}">
+          <span class="st" aria-hidden="true">${ICON[glyphFor(s)]}</span>
+          ${icon}
+          <span class="label"><span class="n">${escapeHtml(s.n)}<span class="sr">, ${stateWord[s.s] || ''}</span></span>${sub}</span>
+          <span class="side">${sideNote(s, st)}</span>
+          <span class="chev">${CHEV}</span>
+        </div>
       </div>`;
   }
   function paintSidebar(st) {
@@ -3211,13 +3319,17 @@ WEB_HTML_BODY
     const rows = sidebarRows(st);
     const html = rows.map(([s, i]) => stepMarkup(s, i, st)).join('');
     if (list.dataset.html !== html) {
-      const focusKey = document.activeElement && document.activeElement.closest && document.activeElement.closest('.step')
-        ? document.activeElement.closest('.step').dataset.key : null;
+      const active = document.activeElement;
+      const row = active && active.closest && list.contains(active) ? active.closest('.step') : null;
+      const focusKey = row ? row.dataset.key : null;
+      const focusPart = active && active.classList.contains('disclose') ? '.disclose' : '.hit';
       list.innerHTML = html;
       list.dataset.html = html;
-      list.querySelectorAll('.step').forEach((el, n) => el.style.setProperty('--i', n));
-      if (focusKey) { const el = list.querySelector(`.step[data-key="${CSS.escape(focusKey)}"]`); if (el) el.focus({ preventScroll: true }); }
-      if (!list.classList.contains('ready')) setTimeout(() => list.classList.add('ready'), 500);
+      if (focusKey) {
+        const el = list.querySelector(`.step[data-key="${CSS.escape(focusKey)}"] ${focusPart}`)
+          || list.querySelector(`.step[data-key="${CSS.escape(focusKey)}"] .hit`);
+        if (el) el.focus({ preventScroll: true });
+      }
     }
     const absent = (st.steps || []).filter((s) => s.av === false && s.key !== 'report').map((s) => s.n);
     const box = $('absent');
@@ -3230,66 +3342,88 @@ WEB_HTML_BODY
     }
   }
 
-  /* ── the pane: plan, live output, or the result ─────────────────────────── */
-  // The pane is rewritten only when its markup changed; the short entrance
-  // plays only when it switches to a different view, never on a refresh.
-  let paneSig = '', paneHtml = '', paneKind = '';
+  /* ── the window: the list, and one detail view pushed over it ───────────── */
+  // The detail view is rewritten only when its markup changed; the push plays
+  // when it opens, never on a refresh.
+  let paneSig = '', paneHtml = '', navKey = null;
+  const BACK = '<svg viewBox="0 0 9 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 1.5 2 7l5.5 5.5"/></svg>';
   function setPane(html, sig) {
-    const box = $('pane-in');
     paneSig = sig;
     if (paneHtml === html) return false;
     paneHtml = html;
-    const kind = sig.split('|').slice(0, 2).join('|');
-    const swap = paneKind !== '' && paneKind !== kind;
-    paneKind = kind;
-    box.innerHTML = html;
-    if (swap && !reduce) { box.classList.remove('swap'); void box.offsetWidth; box.classList.add('swap'); }
+    $('pane-in').innerHTML = html;
     return true;
   }
-  function choosePane(st) {
-    const rows = sidebarRows(st).filter(([, i]) => isOn(i, st));
-    const checked = rows.filter(([s]) => planFor(st, s.key));
-    const later = rows.filter(([s]) => !planFor(st, s.key)).map(([s]) => s.n);
-    let html = checked.map(([s]) => planBlock(st, s)).join('');
-    if (!rows.length) html = '<section class="block"><div class="group"><div class="empty-row">Select at least one source on the left.</div></div></section>';
-    if (later.length) {
-      html += `<p class="note-p"><b>Checked as they run:</b> ${later.map(escapeHtml).join(', ')}.</p>`;
+  function setNav(open) {
+    const was = root.dataset.nav === 'detail';
+    root.dataset.nav = open ? 'detail' : 'list';
+    $('pane').inert = !open;
+    $('list-view').inert = open;
+    if (open && !was) {
+      $('pane').scrollTop = 0;
+      const b = $('pane-in').querySelector('.back');
+      if (b) b.focus({ preventScroll: true });
+    } else if (!open && was && navKey) {
+      const el = $('steps').querySelector(`.step[data-key="${CSS.escape(navKey)}"] .hit`);
+      if (el) el.focus({ preventScroll: true });
     }
-    html += `<p class="note-p"><b>Restarts</b> means the app is quit, updated and reopened in the background: it holds no documents or work. <b>Waits for quit</b> means it is updated on disk now and switches over the next time you quit it. <b>Checks first</b> asks the open app whether it has unsaved work and restarts it only if it has none.</p>`;
-    setPane(html, 'choose|');
+  }
+  function openView(key) {
+    if (!latestState || !key) return;
+    view = key; navKey = key; picked = true; paneSig = '';
+    render(latestState);
+  }
+  function closeView() {
+    if (!view) return;
+    view = null; picked = false;
+    render(latestState);
+  }
+  function navBar(title) {
+    const back = latestPhase === 'done' || latestPhase === 'error' ? 'Summary' : 'Sources';
+    return `<div class="nav"><button type="button" class="back" data-act="back">${BACK}${back}</button><span class="nav-title">${escapeHtml(title)}</span><span></span></div>`;
+  }
+  function detailHead(s, state, tools) {
+    return `<div class="detail-head">${logo(s.slug, s.img, s.n, s.key)}<div class="grow"><h2>${escapeHtml(s.n)}</h2><p>${escapeHtml(state)}</p></div>${tools || ''}</div>`;
   }
 
-  function runPane(st) {
-    const steps = stepsForRibbon(st.steps, 'run', null);
-    if (!picked) {
-      const running = steps.find((s) => s.s === 'run');
-      if (running) view = running.key;
-      else if (!view) { const first = steps[0]; view = first ? first.key : null; }
-    }
-    detailPane(st);
+  // Before Start: what the pre-run check found for one source.
+  function planPane(st) {
+    const s = (st.steps || []).find((x) => x.key === view);
+    const p = s && planFor(st, s.key);
+    if (!p) return false;
+    const tally = planTally(p);
+    const state = p.done ? (tally || 'Up to date') : tally ? `${tally} so far · still checking` : 'Checking what is outdated…';
+    const items = p.items || [];
+    const body = items.length ? `<div class="group">${planRows(items)}</div>`
+      : `<div class="group"><div class="empty-row">${p.done ? 'Nothing outdated.' : 'Checking what is outdated…'}</div></div>`;
+    const note = items.some((it) => it.act === 'restart' || it.act === 'wait' || it.act === 'check')
+      ? '<p class="note-p"><b>Restarts</b> means the app is quit, updated and reopened in the background: it holds no documents or work. <b>Waits for quit</b> means it is updated on disk now and switches over the next time you quit it. <b>Checks first</b> asks the open app whether it has unsaved work and restarts it only if it has none.</p>'
+      : '';
+    setPane(`${navBar(s.n)}<div class="pane-body">${detailHead(s, state)}${body}${note}</div>`, `plan|${s.key}`);
+    return true;
   }
 
+  // During and after the run: one source's own output.
   function detailPane(st) {
     const s = (st.steps || []).find((x) => x.key === view);
-    if (!s) { view = null; return overviewPane(st); }
+    if (!s) return false;
     const state = s.s === 'run' ? `Running · ${fmt(Math.max(0, st.elapsed - (s.b ?? st.elapsed)))}`
       : s.s === 'done' ? `Done in ${dur(s.t)}` : s.s === 'fail' ? `Failed after ${dur(s.t)}`
       : s.s === 'staged' ? `Installed; applies when the app quits · ${dur(s.t)}`
       : s.s === 'skip' ? (s.why === 'guard' ? 'Not installed on this Mac' : 'Skipped')
       : s.est != null ? `Waiting · usually takes ${dur(s.est)}` : 'Waiting';
-    const back = st.phase === 'done' ? `<button type="button" class="btn" data-act="overview">${ICON.back}Summary</button>` : '';
     const copy = `<button type="button" class="btn" data-act="copy-log">${ICON.copy}Copy output</button>`;
-    const head = `<div class="detail-head">${logo(s.slug, s.img)}<div class="grow"><h2>${escapeHtml(s.n)}</h2><p>${escapeHtml(state)}</p></div>${copy}${back}</div>`;
     const plan = livePlan(st, s);
     const sig = `detail|${s.key}|${s.s}|${round}`;
     const fresh = paneSig !== sig || !$('log-md');
     if (fresh) {
-      setPane(`${head}<section class="block"><div class="log" id="log-panel"><div class="log-md" id="log-md" role="log" aria-label="${escapeHtml(s.n)} output"></div></div></section>${plan}`, sig);
+      setPane(`${navBar(s.n)}<div class="pane-body">${detailHead(s, state, copy)}<section class="block"><div class="log" id="log-panel"><div class="log-md" id="log-md" role="log" aria-label="${escapeHtml(s.n)} output"></div></div></section>${plan ? plan.replace('<section class="block">', '<section class="block forecast">') : ''}</div>`, sig);
     } else {
       const h = $('pane-in').querySelector('.detail-head p');
       if (h && h.textContent !== state) h.textContent = state;
     }
     paintLog(s, fresh);
+    return true;
   }
 
   // The pre-run forecast under the output belongs to the step on screen and
@@ -3318,7 +3452,21 @@ WEB_HTML_BODY
     if (stick && s.s === 'run') box.scrollTop = box.scrollHeight;
   }
 
-  function overviewPane(st) {
+  // Above the list once the run is over: failures first, then what waits for
+  // you, then what changed.
+  let summaryHtml = '';
+  function setSummary(html) {
+    if (summaryHtml === html) return false;
+    summaryHtml = html;
+    $('summary').innerHTML = html;
+    return true;
+  }
+  function summaryPane(st) {
+    if (st.phase === 'error') {
+      setSummary('<section class="block"><div class="group"><div class="empty-row">No step ran. Your apps and tools are exactly as they were.</div></div></section>');
+      return;
+    }
+    if (st.phase !== 'done') { setSummary(''); return; }
     const counts = selectedCounts(st.steps, st.phase, null);
     const ups = st.updates || [];
     const blocks = [];
@@ -3366,13 +3514,36 @@ WEB_HTML_BODY
       blocks.push(`<p class="note-p"><b>${waiting.map((s) => escapeHtml(s.n)).join(', ')}</b> left something for later. ${waiting.map((s) => `<button type="button" class="link-btn" data-act="show" data-key="${escapeHtml(s.key)}">See ${escapeHtml(s.n)}</button>`).join(' ')}</p>`);
     }
     blocks.push('<section class="files" id="files"></section><div class="logbox" id="logbox" hidden><pre id="logtext"></pre></div>');
-    const html = blocks.join('');
-    if (setPane(html, `overview|${round}`)) { filesSig = ''; renderFiles(st); }
+    if (setSummary(blocks.join(''))) { filesSig = ''; renderFiles(st); }
   }
   function changeRow(u) {
     const chip = u.st ? stagedNote(u) : `<span class="chip green">${ICON.check}Updated</span>`;
     const link = u.u ? `<small><a href="${escapeHtml(u.u)}" target="_blank" rel="noopener noreferrer">Release notes</a></small>` : '';
-    return `<div class="row"><div class="who"><b>${escapeHtml(u.n)}</b>${link}</div>${versionMarkup(u.o, u.w)}<div class="act">${chip}</div></div>`;
+    return `<div class="row">${logo(u.slug, u.img, u.n, '')}<div class="who"><b>${escapeHtml(u.n)}</b>${versionMarkup(u.o, u.w)}${link}</div><div class="act">${chip}</div></div>`;
+  }
+
+  // The bottom bar: what Update will do, or why the retry is there.
+  function estimateChosen(st) {
+    let serial = 0, wave = 0;
+    for (const [s, i] of sidebarRows(st)) {
+      if (!isOn(i, st)) continue;
+      if (s.est == null) return null;
+      if (SERIAL.includes(s.key)) serial += s.est; else wave = Math.max(wave, s.est);
+    }
+    return serial + wave;
+  }
+  function paintDock(st, counts) {
+    let note = '';
+    if (st.phase === 'choose') {
+      const rows = sidebarRows(st);
+      const on = rows.filter(([, i]) => isOn(i, st)).length;
+      const est = on ? estimateChosen(st) : null;
+      note = on ? `<b>${on}</b> of ${rows.length} selected` + (est ? ` · about ${est < 60 ? 'a minute' : `${Math.round(est / 60)} min`}` : '')
+        : 'Select at least one source';
+    } else if (st.phase === 'error') note = 'Nothing was changed';
+    else if (st.phase === 'done' && counts.fail) note = `Runs only the failed ${counts.fail === 1 ? 'source' : 'sources'} again`;
+    const box = $('dock-note');
+    if (box.innerHTML !== note) box.innerHTML = note;
   }
 
   // The one header action after a run: retry what failed, or ask for the
@@ -3408,10 +3579,13 @@ WEB_HTML_BODY
     const action = retryAction(st, counts);
     $('retry-run').classList.toggle('on', !!action);
     if (action && $('retry-label').textContent !== action) $('retry-label').textContent = action;
-    if (st.phase === 'choose') choosePane(st);
-    else if (st.phase === 'run') runPane(st);
-    else if (st.phase === 'done') { if (view) detailPane(st); else overviewPane(st); }
-    else if (st.phase === 'error') setPane('<section class="block"><div class="group"><div class="empty-row">No step ran. Your apps and tools are exactly as they were.</div></div></section>', 'error');
+    paintDock(st, counts);
+    summaryPane(st);
+    let open = false;
+    if (view && st.phase === 'choose') open = planPane(st);
+    else if (view && st.phase !== 'error') open = detailPane(st);
+    if (!open) view = null;
+    setNav(open);
   }
 
   /* ── the run's log, split on its own step banners ───────────────────────── */
@@ -3835,25 +4009,25 @@ WEB_HTML_BODY
   $('steps').addEventListener('click', (e) => {
     const el = e.target.closest('.step');
     if (!el) return;
-    const i = Number(el.dataset.i);
-    if (latestPhase === 'choose') { toggleChoose(i); return; }
-    view = el.dataset.key;
-    picked = true;
-    paneSig = '';
-    render(latestState);
+    if (e.target.closest('.disclose')) { openView(el.dataset.key); return; }
+    if (latestPhase === 'choose') { toggleChoose(Number(el.dataset.i)); return; }
+    openView(el.dataset.key);
   });
   $('steps').addEventListener('keydown', (e) => {
+    const hit = e.target.closest('.hit');
     const el = e.target.closest('.step');
     if (!el) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const sib = e.key === 'ArrowDown' ? el.nextElementSibling : el.previousElementSibling;
-      if (sib) sib.focus();
+      if (sib) sib.querySelector('.hit').focus();
       return;
     }
+    if (!hit) return;
+    if (e.key === 'ArrowRight' && el.querySelector('.disclose')) { e.preventDefault(); openView(el.dataset.key); return; }
     if ((e.key === 'Enter' || e.key === ' ') && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
-      el.click();
+      hit.click();
     }
   });
   $('select-all').addEventListener('click', () => {
@@ -3863,11 +4037,12 @@ WEB_HTML_BODY
   });
   $('start-run').addEventListener('click', startRun);
   $('retry-run').addEventListener('click', retryFailed);
-  $('pane').addEventListener('click', (e) => {
+  // One handler for the summary above the list and the detail view.
+  $('stage').addEventListener('click', (e) => {
     const b = e.target.closest('button, a');
-    if (!b) return;
-    if (b.dataset.act === 'overview') { view = null; picked = false; paneSig = ''; render(latestState); return; }
-    if (b.dataset.act === 'show') { view = b.dataset.key; picked = true; paneSig = ''; render(latestState); $('pane').scrollTop = 0; return; }
+    if (!b || $('steps').contains(b)) return;
+    if (b.dataset.act === 'back') { closeView(); return; }
+    if (b.dataset.act === 'show') { openView(b.dataset.key); return; }
     if (b.dataset.act === 'copy-log') {
       const text = Array.from(document.querySelectorAll('#log-md .ln'), (ln) => ln.textContent).join('\n').replace(/\n{2,}/g, '\n\n');
       copyText(b, text, 'Output');
@@ -3889,7 +4064,7 @@ WEB_HTML_BODY
       if (latestPhase === 'choose') startRun();
       return;
     }
-    if (e.key === 'Escape' && view && latestPhase === 'done') { view = null; picked = false; paneSig = ''; render(latestState); }
+    if (e.key === 'Escape' && view) { e.preventDefault(); closeView(); }
   });
   // After the run, closing the tab ends the server (and the terminal) at once.
   // Before and during the run a reload must not, so only then.
