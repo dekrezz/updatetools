@@ -448,12 +448,14 @@ ok('a package not reached yet has no state', live.herdr === undefined);
 // the row: the program's logo, and the live state in place of the plan chip
 const document = { getElementById: () => ({}) };
 const window = {};
-eval(pick('const ICON = {', '\n  };\n') + '\n  };');
+// const inside eval stays inside it; the page's tables are lifted to var.
+const lift = (src) => src.replace(/(^|\n)(\s*)const /g, '$1$2var ');
+eval(lift(pick('const ICON = {', '\n  };\n') + '\n  };'));
 eval(pick('function escapeHtml(', '\n  }\n') + '\n  }');
 eval(pick('function versionMarkup(', 'function escapeHtml('));
 eval(pick('function logo(', 'function prettyTail('));
 const plural = (n, a, b) => `${n} ${n === 1 ? a : b}`;
-eval(pick('const ACT = {', 'function planFor('));
+eval(lift(pick('const ACT = {', 'function planFor(')));
 eval(pick('function planRows(', 'function planBlock('));
 const rows = planRows([
   { k: 'rect', n: 'Rectangle', o: '1.0', w: '1.1', act: 'restart', img: 'plan/icons/rect.png', app: true },

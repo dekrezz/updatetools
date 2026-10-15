@@ -31,8 +31,10 @@ closes.
 - `--self-update`: `Formula/updatetools.rb` from this repository, then the
   release tarball it pins, verified against its sha256;
 - apps from DMGs: the download URL and sha256 from the Homebrew cask;
-- report icons: `icons.duckduckgo.com` (by the vendor's host name) and
-  `github.com/<org>.png`, cached in `~/.cache/updatetools/icons`.
+- icons for the dashboard's plan and the report: `icons.duckduckgo.com` (by
+  the vendor's host name) and `github.com/<org>.png`, cached in
+  `~/.cache/updatetools/icons`. An app's own icon is read from its bundle on
+  disk, with no network.
 
 **Background processes:** an update for an open DMG app that is not safe to
 restart is left to a one-shot helper that waits for you to quit the app, swaps

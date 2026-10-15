@@ -278,14 +278,18 @@ buttons): a headline with its one action, then the sources, then the plan.
   **Waits for quit** (open and protected, with the reason), **Installs**,
   **Record only** (the app already updated itself) or **Manual**. The check
   never asks an app anything, so it cannot raise an Automation prompt. Sources
-  without a cheap check are named as "checked as they run". Each source has a
-  switch; the selection is remembered.
+  without a cheap check are named as "checked as they run". Each item shows its
+  logo: an app's own icon from its bundle, a formula's mark or its project's
+  site icon. Each source has a switch; the selection is remembered.
 - **During the run** a timer, a ribbon with one segment per source and its
   legend lead the page. The headline says what is running, how many sources are
   done and, from the durations of earlier runs, about how long is left. A
   running source shows its newest output line in its row; hover a source to
   preview its output and click it to keep it open (a running source's output
-  follows live). Sources still to run keep their plan under the list.
+  follows live). The plan stays under the list for sources still running or
+  to run, and each Homebrew item says where it is, read from Homebrew's own
+  output: **Downloaded**, **Installing**, **Updated**, **Restarted**,
+  **Next launch** or **Failed**.
 - **After the run** the page leads with what needs attention: each failed
   step's own error line (steps that failed for the same reason are grouped),
   with **Retry failed** to run only those steps again while every other result

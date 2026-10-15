@@ -1830,6 +1830,56 @@ ut_icon_datauri() {
   printf 'data:%s;base64,%s' "$mime" "$b64"
 }
 
+# ut_app_icon_png APP OUT — the app's own icon, read from its bundle, as a PNG
+# of at most 64 px (cached by icon path and date). No network, and the app is
+# never asked anything. Fails when the bundle has no .icns icon.
+ut_app_icon_png() {
+  local app="$1" out="$2" name src="" cache key
+  for name in "$(ut_plist_value "$app" CFBundleIconFile)" "$(ut_plist_value "$app" CFBundleIconName)"; do
+    [ -n "$name" ] && [ -f "$app/Contents/Resources/${name%.icns}.icns" ] \
+      && { src="$app/Contents/Resources/${name%.icns}.icns"; break; }
+  done
+  [ -n "$src" ] || return 1
+  cache="${XDG_CACHE_HOME:-$HOME/.cache}/updatetools/icons"
+  key="app-$(printf '%s' "$src" | shasum | cut -c1-16)-$(stat -f %m "$src" 2>/dev/null)"
+  if [ ! -s "$cache/$key.png" ]; then
+    mkdir -p "$cache" 2>/dev/null || return 1
+    sips -s format png -Z 64 "$src" --out "$cache/$key.tmp" >/dev/null 2>&1 \
+      && mv -f "$cache/$key.tmp" "$cache/$key.png" || { rm -f "$cache/$key.tmp"; return 1; }
+  fi
+  mkdir -p "${out%/*}" 2>/dev/null && cp -f "$cache/$key.png" "$out"
+}
+
+# ut_site_icon_file URL BASE — the site's icon (cached, else fetched; see
+# ut_icon_datauri) written to BASE.<png|jpg|webp|ico>, so the dashboard loads
+# it as a file instead of carrying it in every state.json.
+ut_site_icon_file() {
+  local uri ext
+  uri="$(ut_icon_datauri "$1")" || return 1
+  case "${uri%%;*}" in
+    data:image/png) ext=png ;; data:image/jpeg) ext=jpg ;;
+    data:image/webp) ext=webp ;; data:image/x-icon) ext=ico ;; *) return 1 ;;
+  esac
+  mkdir -p "${2%/*}" 2>/dev/null || return 1
+  printf '%s' "${uri#*,}" | base64 -D > "$2.$ext" 2>/dev/null && [ -s "$2.$ext" ] || { rm -f "$2.$ext"; return 1; }
+}
+
+# ut_plan_icon DIR KEY — the plan's icon file for KEY ("plan/icons/x.png"),
+# and whether it is an app's own icon, as JSON fields; nothing when none.
+ut_plan_icon() {
+  local dir="$1" safe ext
+  safe="${2//[^A-Za-z0-9._-]/_}"
+  [ -n "$safe" ] || return 1
+  for ext in png jpg webp ico; do
+    if [ -s "$dir/icons/$safe.$ext" ]; then
+      printf ',"img":"%s/icons/%s.%s"' "${dir##*/}" "$safe" "$ext"
+      [ -f "$dir/icons/$safe.app" ] && printf ',"app":true'
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ut_icon_site NAME — where to fetch a logo for tools Simple Icons doesn't ship.
 # Same cache and fallback as everything else; empty means "no idea".
 ut_icon_site() {
@@ -3105,10 +3155,17 @@ try {
     background:var(--card); border:1px solid var(--card-bd); border-radius:var(--r-lg);
   }
   .group .row{
-    display:grid; grid-template-columns:minmax(0,1fr) minmax(0,auto) 8.5rem;
-    align-items:center; gap:16px; padding:12px 0; min-height:52px;
+    display:grid; grid-template-columns:32px minmax(0,1fr) minmax(0,auto) 8.5rem;
+    align-items:center; gap:14px; padding:10px 0; min-height:52px;
   }
   .group .row + .row{border-top:1px solid var(--divider)}
+  .group .row .logo{width:32px; height:32px}
+  .group .row .logo svg,.group .row .logo img{width:18px; height:18px}
+  .group .row .logo.app-logo img{width:32px; height:32px; border-radius:0}
+  /* The package in hand: accent name, a turning mark; finished ones settle. */
+  .group .row.run .who b{color:var(--accent-ink)}
+  .group .row.run .chip svg{animation:spin 1.1s linear infinite}
+  .group .row.done .ver .to,.group .row.restarted .ver .to{color:var(--ink)}
   .row .who{min-width:0}
   .row .who b{display:block; font:450 15px/21px var(--display); letter-spacing:.11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
   .row .who small{display:block; margin-top:1px; color:var(--ink-3); font:400 13px/18.2px var(--sans); letter-spacing:.18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
@@ -3407,7 +3464,7 @@ try {
   .theme-switch button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
 
   @media (prefers-reduced-motion: reduce){
-    .step.run .step-state svg,.block-head .count.busy::before{animation:none}
+    .step.run .step-state svg,.block-head .count.busy::before,.group .row.run .chip svg{animation:none}
     .wrap,.step,.step.done .step-state svg{animation:none;opacity:1;transform:none}
     .info-tip,.note,.tally,.ledger.show,.ledger.hide,.record svg,.layout-note,.layout-note b,.eye svg,.toggle i,.ledger-back svg{transition:none;animation:none;filter:none;transform:none}
     .ledger{opacity:1}
@@ -3436,9 +3493,10 @@ try {
     .steps{border-radius:var(--r-lg); padding:6px}
     .step{padding:10px 12px 10px 8px; column-gap:12px}
     .group{padding:4px 16px}
-    .group .row{grid-template-columns:minmax(0,1fr) auto; row-gap:6px}
-    .group .row .ver{grid-column:1; grid-row:2}
-    .group .row .act{grid-column:2; grid-row:1 / span 2}
+    .group .row{grid-template-columns:32px minmax(0,1fr) auto; row-gap:6px}
+    .group .row .logo{grid-row:1 / span 2}
+    .group .row .ver{grid-column:2; grid-row:2}
+    .group .row .act{grid-column:3; grid-row:1 / span 2}
     .theme-switch{top:12px; right:12px}
   }
 </style>
@@ -3628,8 +3686,8 @@ WEB_HTML_HEAD
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
   };
 
-  function logo(slug, img, name) {
-    if (img) return `<span class="logo"><img src="${img}" alt=""></span>`;
+  function logo(slug, img, name, app) {
+    if (img) return `<span class="logo${app ? ' app-logo' : ''}"><img src="${img}" alt=""></span>`;
     if (slug === 'applications' && window.UT_DMG_ICON) return `<span class="logo app-logo"><img src="${window.UT_DMG_ICON}" alt=""></span>`;
     if (slug && document.getElementById('i-' + slug)) return `<span class="logo"><svg viewBox="0 0 24 24"><use href="#i-${slug}"/></svg></span>`;
     return `<span class="logo mono">${escapeHtml((name || '?').charAt(0).toUpperCase())}</span>`;
@@ -3765,6 +3823,19 @@ WEB_HTML_HEAD
     const a = ACT[act] || ACT.update;
     return `<span class="chip ${a.chip}">${a.icon ? ICON[a.icon] : ''}${a.word}</span>`;
   }
+  // Where a planned package is during the run, in place of its plan chip.
+  const LIVE = {
+    got: { chip: '', icon: 'down', word: 'Downloaded' },
+    run: { chip: 'blue', icon: 'run', word: 'Installing' },
+    done: { chip: 'green', icon: 'done', word: 'Updated' },
+    restarted: { chip: 'green', icon: 'restart', word: 'Restarted' },
+    staged: { chip: 'amber', icon: 'wait', word: 'Next launch' },
+    fail: { chip: 'red', icon: 'fail', word: 'Failed' },
+  };
+  function liveChip(state) {
+    const a = LIVE[state];
+    return `<span class="chip ${a.chip}">${ICON[a.icon]}${a.word}</span>`;
+  }
   function planFor(st, key) {
     const p = st.plan && st.plan[key];
     return p ? p : null;
@@ -3779,15 +3850,19 @@ WEB_HTML_HEAD
     });
     return { n, busy };
   }
-  function planRows(items) {
+  function planRows(items, live) {
     const sorted = (items || []).slice().sort((a, b) => ((ACT[a.act] || ACT.update).order - (ACT[b.act] || ACT.update).order)
       || a.n.localeCompare(b.n));
-    return sorted.map((it) => `
-      <div class="row">
+    return sorted.map((it) => {
+      const now = live && LIVE[live[it.k || it.n]] ? live[it.k || it.n] : '';
+      return `
+      <div class="row${now ? ` ${now}` : ''}" data-k="${escapeHtml(it.k || it.n)}">
+        ${logo(it.slug, it.img, it.n, it.app)}
         <div class="who"><b>${escapeHtml(it.n)}</b>${it.why ? `<small>${escapeHtml(it.why)}</small>` : ''}</div>
         ${versionMarkup(it.o, it.w)}
-        <div class="act">${actChip(it.act)}</div>
-      </div>`).join('');
+        <div class="act">${now ? liveChip(now) : actChip(it.act)}</div>
+      </div>`;
+    }).join('');
   }
   function planBlock(st, s) {
     const p = planFor(st, s.key);
@@ -3795,11 +3870,87 @@ WEB_HTML_HEAD
     const items = p.items || [];
     const auto = items.filter((it) => it.act !== 'manual').length, manual = items.length - auto;
     const tally = [auto ? plural(auto, 'update', 'updates') : '', manual ? `${manual} manual` : ''].filter(Boolean).join(' · ');
+    // During the run the count follows the packages: how many are through.
+    const live = st.phase === 'run' ? planLive[s.key] : null;
+    const states = live ? Object.values(live) : [];
+    const through = states.filter((x) => x === 'done' || x === 'restarted' || x === 'staged').length;
+    const failed = states.filter((x) => x === 'fail').length;
     const count = !p.done ? `<span class="count busy">${tally ? `${tally} so far` : 'Checking'}</span>`
+      : states.length ? `<span class="count${states.includes('run') ? ' busy' : ''}">${through} of ${auto} updated${failed ? ` · ${failed} failed` : ''}</span>`
       : `<span class="count">${tally || 'Up to date'}</span>`;
-    const body = items.length ? planRows(items)
+    const body = items.length ? planRows(items, live)
       : `<div class="empty-row">${p.done ? 'Nothing outdated.' : 'Checking what is outdated…'}</div>`;
     return `<section class="block"><div class="block-head"><h2>${escapeHtml(s.n)}</h2>${count}</div><div class="group">${body}</div></section>`;
+  }
+
+  // Where each planned package is, read from its step's own output. Homebrew
+  // prints "✔︎ Bottle x (v)" once a download is in, "==> Upgrading x" when it
+  // starts, and "🍺  …/Cellar/x/v: …" or "🍺  x was successfully upgraded!"
+  // when it is done; the casks loop adds ">> x: …" before each app, "staging"
+  // for one left open, "restarted on the new version", and "!! x: …" when it
+  // fails. An "Error:" line fails the package in hand.
+  function planProgress(section, items) {
+    const keyOf = new Map();
+    (items || []).forEach((it) => {
+      const k = it.k || it.n;
+      keyOf.set(k, k);
+      if (!keyOf.has(k.split('/').pop())) keyOf.set(k.split('/').pop(), k);
+    });
+    const live = {}, staging = new Set();
+    let cur = null;
+    const start = (name) => {
+      const k = keyOf.get(name);
+      if (!k) return;
+      // One that started and never said how it ended is not claimed either way.
+      if (cur && cur !== k && live[cur] === 'run') delete live[cur];
+      cur = k;
+      if (!live[k] || live[k] === 'got') live[k] = 'run';
+    };
+    const finish = (name) => {
+      const k = keyOf.get(name);
+      if (k) live[k] = staging.has(k) ? 'staged' : 'done';
+    };
+    String(section || '').split(/\r?\n/).forEach((raw) => {
+      const t = raw.trim();
+      let m;
+      if ((m = t.match(/^\u2714\uFE0E?\s+(?:Bottle|Cask)\s+(\S+)\s+\(/))) {
+        const k = keyOf.get(m[1]);
+        if (k && !live[k]) live[k] = 'got';
+      } else if ((m = t.match(/^==> (?:Upgrading|Reinstalling) (\S+)$/))) {
+        start(m[1]);
+      } else if ((m = t.match(/^>> (\S+?):\s+(.*)$/))) {
+        start(m[1]);
+        if (cur && /\bstaging\b/.test(m[2])) staging.add(cur);
+      } else if ((m = t.match(/^\u{1F37A}\s+(\S+) was successfully (?:upgraded|reinstalled|installed)!/u))) {
+        finish(m[1]);
+      } else if ((m = t.match(/^\u{1F37A}\s+\S*\/Cellar\/([^/]+)\//u))) {
+        finish(m[1]);
+      } else if (/^restarted on the new version/.test(t)) {
+        if (cur) live[cur] = 'restarted';
+      } else if ((m = t.match(/^!!\s+(\S+?):/))) {
+        const k = keyOf.get(m[1]);
+        if (k) live[k] = 'fail';
+      } else if (/^Error:/.test(t) && cur && live[cur] === 'run') {
+        live[cur] = 'fail';
+      }
+    });
+    return live;
+  }
+  // While a step with a plan runs, its rows follow its output (about once a
+  // second, from the log the page reads anyway).
+  let planLive = {};
+  function trackPlan(st) {
+    if (st.phase !== 'run' || !st.plan) return;
+    const running = (st.steps || []).filter((s) => s.s === 'run' && planFor(st, s.key));
+    if (!running.length) return;
+    fetchLog(1200).then(() => {
+      let changed = false;
+      running.forEach((s) => {
+        const next = planProgress(sliceFor(stepLabel(s)), planFor(st, s.key).items);
+        if (JSON.stringify(next) !== JSON.stringify(planLive[s.key] || {})) { planLive[s.key] = next; changed = true; }
+      });
+      if (changed && latestState && latestState.phase === 'run') paintPlan(latestState);
+    });
   }
 
   /* ── state ──────────────────────────────────────────────────────────────── */
@@ -4077,7 +4228,7 @@ WEB_HTML_HEAD
   }
   function changeRow(u) {
     const link = u.u ? `<small><a href="${escapeHtml(u.u)}" target="_blank" rel="noopener noreferrer">Release notes</a></small>` : '';
-    return `<div class="row"><div class="who"><b>${escapeHtml(u.n)}</b>${link}</div>${versionMarkup(u.o, u.w)}<div class="act">${stagedNote(u)}</div></div>`;
+    return `<div class="row">${logo(u.slug, u.img, u.n, u.app)}<div class="who"><b>${escapeHtml(u.n)}</b>${link}</div>${versionMarkup(u.o, u.w)}<div class="act">${stagedNote(u)}</div></div>`;
   }
   function paintResult(st, counts) {
     const done = st.phase === 'done';
@@ -4116,7 +4267,7 @@ WEB_HTML_HEAD
     $('ledger-empty').hidden = ups.length > 0;
     const list = ups.map((u) => `
         <li>
-          ${logo(u.slug, u.img, u.n)}
+          ${logo(u.slug, u.img, u.n, u.app)}
           <span class="name">${escapeHtml(u.n)}${u.u ? `<small><a href="${escapeHtml(u.u)}" target="_blank" rel="noopener noreferrer">Release notes</a></small>` : ''}</span>
           <span class="ver-cell">${versionMarkup(u.o, u.w)}${stagedNote(u)}</span>
         </li>`).join('');
@@ -4201,7 +4352,7 @@ WEB_HTML_HEAD
     if (morphing) { morphNext = st; reserveRunTail(st); return; }
     if (startSent && st.phase === 'choose') return;      // Start sent, server not caught up
     if (retrySent && st.phase === 'done' && (st.round || 1) === round) return;
-    if ((st.round || 1) !== round) { round = st.round || 1; retrySent = false; failReasons = null; reasonsBusy = false; }
+    if ((st.round || 1) !== round) { round = st.round || 1; retrySent = false; failReasons = null; reasonsBusy = false; planLive = {}; }
     if (retrySent && st.phase === 'error' && latestPhase === 'error') return;   // Try again sent, server not caught up
     if (retrySent && latestPhase === 'error' && st.phase !== 'error') retrySent = false;
     if (root.dataset.phase === 'choose' && st.phase !== 'choose') { beginRunMorph(st); return; }
@@ -4226,6 +4377,7 @@ WEB_HTML_HEAD
     paintRibbon(st);
     paintList(st);
     paintPlan(st);
+    trackPlan(st);
     const action = retryAction(st, counts);
     $('after').hidden = !action;
     if (action && $('retry-label').textContent !== action) $('retry-label').textContent = action;
@@ -5133,23 +5285,53 @@ ut_plan_homebrew() {
       fi
       name="$(ut_pretty_name "$token" "$name")"
       act=""
-      if [ -n "$app" ] && [ -n "$ver" ] && [ "$ver" != "latest" ]; then
-        local p
-        p="$(app_path "$app" 2>/dev/null)" && cur="$(ut_plist_value "$p" CFBundleShortVersionString)" \
+      local p=""
+      [ -n "$app" ] && p="$(app_path "$app" 2>/dev/null)"
+      if [ -n "$p" ] && [ -n "$ver" ] && [ "$ver" != "latest" ]; then
+        cur="$(ut_plist_value "$p" CFBundleShortVersionString)" \
           && [ "$cur" = "$ver" ] && act="sync|Already updated itself"
       fi
       [ -n "$act" ] || act="$(ut_cask_plan "$token" "$app")"
-      printf '%s|%s|%s|%s\n' "${name//|/}" "$old" "$new" "$act" >> "$dir/homebrew.plan.tmp"
+      # name|old|new|act|why|token|app — the token and app for the page's
+      # logo and for following the package through the run's output.
+      printf '%s|%s|%s|%s|%s|%s\n' "${name//|/}" "$old" "$new" "$act" "$token" "${p//|/}" >> "$dir/homebrew.plan.tmp"
+      if [ -n "$p" ] && ut_app_icon_png "$p" "$dir/icons/${token//[^A-Za-z0-9._-]/_}.png"; then
+        : > "$dir/icons/${token//[^A-Za-z0-9._-]/_}.app"
+      fi
     done < "$dir/homebrew.casks"
   fi
   rm -f "$dir/homebrew.casks"
   cp -f "$dir/homebrew.plan.tmp" "$dir/homebrew.plan"
+  local formulae=""
   while IFS='|' read -r token old new _; do
     [ -n "$token" ] || continue
-    printf '%s|%s|%s|update|\n' "$token" "$old" "$new" >> "$dir/homebrew.plan.tmp"
+    printf '%s|%s|%s|update||%s|\n' "$token" "$old" "$new" "$token" >> "$dir/homebrew.plan.tmp"
+    formulae="${formulae:+$formulae }$token"
   done <<< "$(brew outdated --formula --verbose 2>/dev/null | while IFS= read -r line; do
       [ -n "$line" ] && _ut_parse_outdated "$line" formula; done)"
+  # shellcheck disable=SC2086 # one token per word
+  [ -n "$formulae" ] && ut_plan_formula_icons "$dir" $formulae
   mv -f "$dir/homebrew.plan.tmp" "$dir/homebrew.plan"
+}
+
+# ut_plan_formula_icons DIR TOKEN... — logos for planned formulae. A Simple
+# Icons mark needs no file; otherwise the project's site icon (cached, else
+# fetched side by side, each capped by curl's own timeout) goes to DIR/icons.
+ut_plan_formula_icons() {
+  local dir="$1" homes t home pids=""
+  shift
+  homes="$(brew info --formula --json=v2 "$@" 2>/dev/null \
+    | jq -r '.formulae[] | (.homepage // "") as $h | ([(.full_name // .name), $h], [.name, $h]) | @tsv' 2>/dev/null)"
+  for t in "$@"; do
+    [ -n "$(ut_icon_slug "$t")" ] && continue
+    home="$(printf '%s\n' "$homes" | awk -F'\t' -v t="$t" -v s="${t##*/}" '$1==t || $1==s { print $2; exit }')"
+    [ -n "$home" ] || continue
+    ut_site_icon_file "$home" "$dir/icons/${t//[^A-Za-z0-9._-]/_}" &
+    pids="$pids $!"
+  done
+  # shellcheck disable=SC2086 # one pid per word
+  [ -n "$pids" ] && wait $pids
+  return 0
 }
 
 # ut_plan_appstore DIR — `mas outdated`, with the same running-app rule.
@@ -5213,7 +5395,7 @@ ut_preflight_settle() {
 
 # ut_plan_json DIR — {"homebrew":{"done":true,"items":[...]},...} for the page.
 ut_plan_json() {
-  local dir="$1" f key out="" items name old new act why
+  local dir="$1" f key out="" items name old new act why k slug
   [ -d "$dir" ] || return 0
   for key in homebrew appstore; do
     f="$dir/$key.plan"
@@ -5223,10 +5405,18 @@ ut_plan_json() {
     esac
     items=""
     if [ -f "$f" ]; then
-      while IFS='|' read -r name old new act why; do
+      while IFS='|' read -r name old new act why k _; do
         [ -n "$name" ] || continue
         [ -n "$items" ] && items+=","
-        items+="{\"n\":\"$(ut_json_escape "$name")\",\"o\":\"$(ut_json_escape "$old")\",\"w\":\"$(ut_json_escape "$new")\",\"act\":\"$(ut_json_escape "$act")\",\"why\":\"$(ut_json_escape "$why")\"}"
+        items+="{\"n\":\"$(ut_json_escape "$name")\",\"o\":\"$(ut_json_escape "$old")\",\"w\":\"$(ut_json_escape "$new")\",\"act\":\"$(ut_json_escape "$act")\",\"why\":\"$(ut_json_escape "$why")\""
+        # Its logo: the plan's icon file, else a Simple Icons mark, else none
+        # (the page draws a monogram).
+        [ -n "${k:-}" ] && items+=",\"k\":\"$(ut_json_escape "$k")\""
+        if ! items+="$(ut_plan_icon "$dir" "${k:-}")"; then
+          slug="$(ut_icon_slug "${k:-$name}")"
+          [ -n "$slug" ] && items+=",\"slug\":\"$slug\""
+        fi
+        items+="}"
       done < "$f"
     fi
     [ -n "$out" ] && out+=","
@@ -5366,19 +5556,24 @@ ut_web_state() {
 # ut_web_updates DATA_FILE — turn the report's records into the JSON the page
 # shows in its "after" section (same logos and vendor names as the HTML report).
 ut_web_updates() {
-  local f=${1-} key display old new url state slug img out=""
+  local f=${1-} key display old new url state slug img icon out=""
   [ -r "$f" ] || return 0
   while IFS='|' read -r key display old new url state || [ -n "${key:-}" ]; do
     [ -n "${key:-}" ] || continue
     display=$(ut_pretty_name "$key" "${display:-$key}")
-    slug="$(ut_icon_slug "$display")"
-    img=""
-    if [ -z "$slug" ]; then
-      local home; home=$(ut_icon_homepage "$key") && img=$(ut_icon_datauri "$home") || img=""
+    # The icon the plan already showed (an app's own, or the site's), else a
+    # Simple Icons mark, else the site's icon fetched now.
+    slug="" img="" icon=""
+    [ -n "${UT_PLAN_DIR:-}" ] && icon="$(ut_plan_icon "$UT_PLAN_DIR" "$key")"
+    if [ -z "$icon" ]; then
+      slug="$(ut_icon_slug "$display")"
+      if [ -z "$slug" ]; then
+        local home; home=$(ut_icon_homepage "$key") && img=$(ut_icon_datauri "$home") || img=""
+      fi
     fi
     [ -n "$out" ] && out+=","
     out+="{\"n\":\"$(ut_json_escape "$display")\",\"o\":\"$(ut_json_escape "${old%%,*}")\""
-    out+=",\"w\":\"$(ut_json_escape "${new%%,*}")\",\"slug\":\"$slug\""
+    out+=",\"w\":\"$(ut_json_escape "${new%%,*}")\",\"slug\":\"$slug\"$icon"
     [ -n "$img" ] && out+=",\"img\":\"$img\""
     case "${state:-}" in staged|restarted) out+=",\"st\":\"$state\"" ;; esac
     case "${url:-}" in https://*|http://*) out+=",\"u\":\"$(ut_json_escape "$url")\"" ;; esac
