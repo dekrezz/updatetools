@@ -257,7 +257,7 @@ const pick = (from, to) => {
 };
 let chooseLocal = null;
 eval(pick('function stepSelected(', 'function paintRibbon('));
-eval(pick('function sidebarRows(', '/* ── the plan'));
+eval(pick('function sourceRows(', '/* ── the plan'));
 eval(pick('function errorFrom(', 'async function loadFailReasons('));
 let fails = 0;
 const ok = (n, cond) => { console.log((cond ? 'ok - ' : 'not ok - ') + n); if (!cond) fails++; };
@@ -268,7 +268,7 @@ const steps = [
   { n: 'gh', key: 'github', s: 'skip', why: 'off', on: false },
   { n: 'Report', key: 'report', slug: 'report', s: 'done', on: true },
 ];
-const keys = (st) => sidebarRows(st).map(([s]) => s.key).join(',');
+const keys = (st) => sourceRows(st).map(([s]) => s.key).join(',');
 ok('choose lists installed tools, not the report', keys({ phase: 'choose', steps }) === 'homebrew,npm,github');
 ok('run lists selected tools only', keys({ phase: 'run', steps }) === 'homebrew,npm');
 ok('npm error line is found', errorFrom('npm ERR! code EACCES\nnpm ERR! syscall rename') === 'npm ERR! syscall rename');
@@ -327,7 +327,7 @@ ok('a clean run offers no retry', retryAction({ phase: 'done' }, { fail: 0 }) ==
 ok('a rejected password offers to try again', retryAction({ phase: 'error' }, { fail: 0 }) === 'Try again');
 ok('a running update offers no retry', retryAction({ phase: 'run' }, { fail: 1 }) === '');
 
-// sidebar after a rejected password: no time estimates for steps that will not run
+// source list after a rejected password: no time estimates for steps that will not run
 const fmt = (s) => `${s}`, dur = (s) => `${s}s`;
 eval(pick('function sideNote(', 'const glyphFor'));
 ok('pending steps carry no estimate on the error screen', sideNote({ s: 'pending', est: 80 }, { phase: 'error', elapsed: 0 }) === '');
@@ -340,7 +340,7 @@ const $ = (id) => (els[id] = els[id] || el());
 const document = { title: '' };
 const plural = (n, a, b) => `${n} ${n === 1 ? a : b}`;
 eval(pick('function escapeHtml(', '\n  }\n') + '\n  }');
-eval(pick('function paintHeader(', '/* ── the sidebar'));
+eval(pick('function paintHeader(', '/* ── the source list'));
 paintHeader({ phase: 'error', message: 'x' }, { fail: 0, done: 0, staged: 0, skip: 0, total: 3 });
 ok('the error screen does not send the user back to the terminal', !/Run updatetools again/.test($('phase').innerHTML));
 ok('the error screen names the way forward', /Try again/.test($('phase').innerHTML));

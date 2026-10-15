@@ -20,16 +20,17 @@ assert_eq() {
   fi
 }
 
-# Layout: the header carries the status line, the Start button and the
-# progress ribbon; the source list and the main pane follow.
+# Layout (Antigravity): one centred column. The timer, the progress ribbon and
+# its legend lead; the headline and Start follow; then the source list and the
+# plan of what each source will update.
 ut_web_page > "$tmp/page.html"
 python3 - "$tmp/page.html" <<'PY' > "$tmp/order.txt"
 import re, sys
 html = open(sys.argv[1]).read()
-ids = re.findall(r'id="(headline|start-run|ribbon|steps|pane)"', html)
+ids = re.findall(r'id="(clock|ribbon|legend|headline|start-run|steps|plan)"', html)
 print(' '.join(ids))
 PY
-assert_eq "header then sources then pane" "headline start-run ribbon steps pane" "$(cat "$tmp/order.txt")"
+assert_eq "timer, ribbon, legend, headline, start, sources, plan" "clock ribbon legend headline start-run steps plan" "$(cat "$tmp/order.txt")"
 grep -q 'id="select-all"' "$tmp/page.html" && pass "select all control" || fail "select all control"
 grep -q 'aria-keyshortcuts="Meta+Enter"' "$tmp/page.html" && pass "start has a keyboard shortcut" || fail "start has a keyboard shortcut"
 
