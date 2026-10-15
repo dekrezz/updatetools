@@ -31,7 +31,7 @@ updatetools
 
 A live dashboard opens in your browser and checks what is outdated while you
 look: every app with its old and new version, and what will happen to it if it
-is open (restarted, or left until you quit it, and why). Press **Update**
+is open (restarted, or left until you quit it, and why). Press **Start update**
 (or <kbd>⌘</kbd><kbd>↩</kbd>). `updatetools --yes` skips that screen and starts
 with your saved selection.
 

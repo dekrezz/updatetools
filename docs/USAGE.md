@@ -103,8 +103,8 @@ formula. `--self-update` stamps the release tag it installed.
 |------|--------|
 | `--plain` | Force plain scrolling output instead of the dashboard. |
 | `--web` | Force the dashboard (default; useful only to override `PLAIN=1`). |
-| `--yes`, `-y` | Open the dashboard and start at once with the saved selection (plus `--only` / `--skip`), without waiting for **Update**. Does not rewrite the saved set. |
-| `--only a,b` | This run only: enable these step keys (comma/space list). Does not rewrite the saved set unless you press Update in the dashboard. |
+| `--yes`, `-y` | Open the dashboard and start at once with the saved selection (plus `--only` / `--skip`), without waiting for **Start update**. Does not rewrite the saved set. |
+| `--only a,b` | This run only: enable these step keys (comma/space list). Does not rewrite the saved set unless you press Start update in the dashboard. |
 | `--skip a,b` | This run only: disable these step keys. |
 | `--debug`, `--keep` | Keep the run log and write the HTML report to the Desktop. |
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
@@ -121,11 +121,11 @@ Default is to notify at the end of every run (dashboard and `--plain`, including
 
 ### Which steps run
 
-The dashboard lists the sources installed on this Mac with a checkbox and waits
-for **Update** (or <kbd>⌘</kbd><kbd>↩</kbd>) before any step command runs; tools
+The dashboard lists the sources installed on this Mac with a switch and waits
+for **Start update** (or <kbd>⌘</kbd><kbd>↩</kbd>) before any step command runs; tools
 that are not installed are named once below the list instead. Closing the tab
 still cancels the run. Your enabled set is saved to
-`~/.config/updatetools/enabled` (one key per line) when you press Update; the
+`~/.config/updatetools/enabled` (one key per line) when you press Start update; the
 internal `report` step always runs. With `--yes` the run starts immediately.
 A missing file means all steps are on; an unreadable file is a hard error.
 
@@ -267,7 +267,9 @@ report to the Desktop as a self-contained HTML file.
 
 The run has no terminal UI. It serves a page on `127.0.0.1` (random port), opens
 it in your default browser, and prints one summary line in the terminal when the
-run is over. The page has the sources on the left and the work on the right:
+run is over. The page is one centred column in Antigravity's design language
+(Google Sans Flex, near-black ink on white or the reverse, 24px cards, pill
+buttons): a headline with its one action, then the sources, then the plan.
 
 - **Before the run** it checks, read-only and in the background, what Homebrew
   (and `mas`, when installed) would update, and lists each item with its old and
@@ -276,24 +278,29 @@ run is over. The page has the sources on the left and the work on the right:
   **Waits for quit** (open and protected, with the reason), **Installs**,
   **Record only** (the app already updated itself) or **Manual**. The check
   never asks an app anything, so it cannot raise an Automation prompt. Sources
-  without a cheap check are named as "checked as they run".
-- **During the run** the header says what is running, how many sources are done
-  and, from the durations of earlier runs, about how long is left. The right side
-  follows the running step's output live; click any source to read its output.
+  without a cheap check are named as "checked as they run". Each source has a
+  switch; the selection is remembered.
+- **During the run** a timer, a ribbon with one segment per source and its
+  legend lead the page. The headline says what is running, how many sources are
+  done and, from the durations of earlier runs, about how long is left. A
+  running source shows its newest output line in its row; hover a source to
+  preview its output and click it to keep it open (a running source's output
+  follows live). Sources still to run keep their plan under the list.
 - **After the run** the page leads with what needs attention: each failed
   step's own error line (steps that failed for the same reason are grouped),
   with **Retry failed** to run only those steps again while every other result
-  stays. Then the apps that wait for you to quit, then everything that was
-  updated, with release notes where known.
+  stays. Then the apps that wait for you to quit, then a card that opens every
+  version that moved, with release notes where known. A clean run opens that
+  list on its own.
 
-Light, dark or system appearance is a switch in the header. Passwords are asked for **in the page** — nothing is echoed as
+Light, dark or system appearance is a switch in the top-right corner. Passwords are asked for **in the page** — nothing is echoed as
 you type — and the answer goes straight to `sudo`. If the keyboard is not the
 language that password was accepted in (English until one succeeds), the reveal
 control closes and the sheet says which language is on instead. If a required
 password is rejected (three tries, or the prompt is cancelled), no step starts
 and nothing is changed; the page offers **Try again**, which asks for it once
 more without restarting the tool. If the password is rejected when you press
-**Retry failed**, nothing runs again and the header says so.
+**Retry failed**, nothing runs again and the page says so.
 
 Access is locked down: loopback only, a random per-run token exchanged for an
 `HttpOnly` cookie (everything else is `403`), a `Host` check against DNS
