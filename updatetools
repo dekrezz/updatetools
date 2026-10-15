@@ -3825,6 +3825,7 @@ WEB_HTML_HEAD
   }
   // Where a planned package is during the run, in place of its plan chip.
   const LIVE = {
+    dl: { chip: 'blue', icon: 'down', word: 'Downloading' },
     got: { chip: '', icon: 'down', word: 'Downloaded' },
     run: { chip: 'blue', icon: 'run', word: 'Installing' },
     done: { chip: 'green', icon: 'done', word: 'Updated' },
@@ -3832,9 +3833,14 @@ WEB_HTML_HEAD
     staged: { chip: 'amber', icon: 'wait', word: 'Next launch' },
     fail: { chip: 'red', icon: 'fail', word: 'Failed' },
   };
-  function liveChip(state) {
+  function liveChip(state, dl) {
     const a = LIVE[state];
-    return `<span class="chip ${a.chip}">${ICON[a.icon]}${a.word}</span>`;
+    // A download says how far it is: a share of the size Homebrew announced,
+    // else what has arrived.
+    const far = state === 'dl' && dl
+      ? (dl.size ? ` ${Math.min(99, Math.floor((100 * dl.got) / dl.size))}%` : ` ${Math.max(1, Math.round(dl.got / 1e6))} MB`)
+      : '';
+    return `<span class="chip ${a.chip}">${ICON[a.icon]}${a.word}${far}</span>`;
   }
   function planFor(st, key) {
     const p = st.plan && st.plan[key];
@@ -3860,7 +3866,7 @@ WEB_HTML_HEAD
         ${logo(it.slug, it.img, it.n, it.app)}
         <div class="who"><b>${escapeHtml(it.n)}</b>${it.why ? `<small>${escapeHtml(it.why)}</small>` : ''}</div>
         ${versionMarkup(it.o, it.w)}
-        <div class="act">${now ? liveChip(now) : actChip(it.act)}</div>
+        <div class="act">${now ? liveChip(now, live.$dl && live.$dl[it.k || it.n]) : actChip(it.act)}</div>
       </div>`;
     }).join('');
   }
@@ -3876,7 +3882,7 @@ WEB_HTML_HEAD
     const through = states.filter((x) => x === 'done' || x === 'restarted' || x === 'staged').length;
     const failed = states.filter((x) => x === 'fail').length;
     const count = !p.done ? `<span class="count busy">${tally ? `${tally} so far` : 'Checking'}</span>`
-      : states.length ? `<span class="count${states.includes('run') ? ' busy' : ''}">${through} of ${auto} updated${failed ? ` · ${failed} failed` : ''}</span>`
+      : states.length ? `<span class="count${states.includes('run') || states.includes('dl') ? ' busy' : ''}">${through} of ${auto} updated${failed ? ` · ${failed} failed` : ''}</span>`
       : `<span class="count">${tally || 'Up to date'}</span>`;
     const body = items.length ? planRows(items, live)
       : `<div class="empty-row">${p.done ? 'Nothing outdated.' : 'Checking what is outdated…'}</div>`;
@@ -3888,16 +3894,19 @@ WEB_HTML_HEAD
   // starts, and "🍺  …/Cellar/x/v: …" or "🍺  x was successfully upgraded!"
   // when it is done; the casks loop adds ">> x: …" before each app, "staging"
   // for one left open, "restarted on the new version", and "!! x: …" when it
-  // fails. An "Error:" line fails the package in hand.
-  function planProgress(section, items) {
+  // fails. An "Error:" line fails the package in hand. DOWNLOADS (state.dl)
+  // has the bytes of each bottle still arriving; Homebrew's summary line
+  // ("llvm@21  21.1.8 -> 21.1.8_1  (322.8MB)") has its size.
+  function planProgress(section, items, downloads) {
     const keyOf = new Map();
     (items || []).forEach((it) => {
       const k = it.k || it.n;
       keyOf.set(k, k);
       if (!keyOf.has(k.split('/').pop())) keyOf.set(k.split('/').pop(), k);
     });
-    const live = {}, staging = new Set();
+    const live = {}, staging = new Set(), sizes = {};
     let cur = null;
+    const UNIT = { B: 1, KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 };
     const start = (name) => {
       const k = keyOf.get(name);
       if (!k) return;
@@ -3913,7 +3922,10 @@ WEB_HTML_HEAD
     String(section || '').split(/\r?\n/).forEach((raw) => {
       const t = raw.trim();
       let m;
-      if ((m = t.match(/^\u2714\uFE0E?\s+(?:Bottle|Cask)\s+(\S+)\s+\(/))) {
+      if ((m = t.match(/^(\S+)\s+\S+\s+->\s+\S+\s+\(([\d.]+)\s*([KMGT]?B)\)$/))) {
+        const k = keyOf.get(m[1]);
+        if (k) sizes[k] = Math.round(parseFloat(m[2]) * UNIT[m[3]]);
+      } else if ((m = t.match(/^\u2714\uFE0E?\s+(?:Bottle|Cask)\s+(\S+)\s+\(/))) {
         const k = keyOf.get(m[1]);
         if (k && !live[k]) live[k] = 'got';
       } else if ((m = t.match(/^==> (?:Upgrading|Reinstalling) (\S+)$/))) {
@@ -3934,6 +3946,15 @@ WEB_HTML_HEAD
         live[cur] = 'fail';
       }
     });
+    // Not enumerable: the states stay a plain name → state map.
+    const dl = {};
+    Object.entries(downloads || {}).forEach(([name, got]) => {
+      const k = keyOf.get(name);
+      if (!k || (live[k] && live[k] !== 'got')) return;
+      live[k] = 'dl';
+      dl[k] = { got, size: sizes[k] || 0 };
+    });
+    Object.defineProperty(live, '$dl', { value: dl, enumerable: false });
     return live;
   }
   // While a step with a plan runs, its rows follow its output (about once a
@@ -3946,8 +3967,9 @@ WEB_HTML_HEAD
     fetchLog(1200).then(() => {
       let changed = false;
       running.forEach((s) => {
-        const next = planProgress(sliceFor(stepLabel(s)), planFor(st, s.key).items);
-        if (JSON.stringify(next) !== JSON.stringify(planLive[s.key] || {})) { planLive[s.key] = next; changed = true; }
+        const next = planProgress(sliceFor(stepLabel(s)), planFor(st, s.key).items, st.dl);
+        const was = planLive[s.key] || {};
+        if (JSON.stringify([next, next.$dl]) !== JSON.stringify([was, was.$dl])) { planLive[s.key] = next; changed = true; }
       });
       if (changed && latestState && latestState.phase === 'run') paintPlan(latestState);
     });
@@ -5542,6 +5564,11 @@ ut_web_state() {
     fi
     [ -n "${UT_WEB_NOTICE:-}" ] && printf ',"notice":"%s"' "$(ut_json_escape "$UT_WEB_NOTICE")"
     [ -n "${UT_PLAN_JSON:-}" ] && printf ',"plan":%s' "$UT_PLAN_JSON"
+    if [ "$phase" = "run" ]; then
+      local dls
+      dls="$(ut_brew_downloads | awk '{ printf "%s\"%s\":%d", (n++ ? "," : ""), $1, $2 }')"
+      [ -n "$dls" ] && printf ',"dl":{%s}' "$dls"
+    fi
     [ "${AUTO_START:-0}" = "1" ] && printf ',"auto":true'
     [ -n "${UT_RUN_ROUND:-}" ] && printf ',"round":%d' "$UT_RUN_ROUND"
     printf ',"debug":%s' "$([ "${DEBUG:-0}" = "1" ] && echo true || echo false)"
@@ -6349,6 +6376,35 @@ ut_absorb_step_log() {
   cat "$steplog" >> "$LOG" 2>/dev/null
 }
 
+# Homebrew prints nothing while a bottle or a cask downloads; the download
+# itself is the sign of life: <cache>/downloads/<sha>--<name>.incomplete grows
+# until it is complete. Bottles name their formula: <sha>--<name>--<version>…
+ut_brew_downloads_dir() { printf '%s\n' "${HOMEBREW_CACHE:-$HOME/Library/Caches/Homebrew}/downloads"; }
+# ut_brew_downloads — "name bytes" for each formula bottle still downloading
+# (touched in the last two minutes: a partial file left by an earlier run is
+# not a download in progress until Homebrew resumes it).
+ut_brew_downloads() {
+  local f base name now
+  now=$(date +%s)
+  for f in "$(ut_brew_downloads_dir)"/*--*--*.incomplete; do
+    [ -f "$f" ] || continue
+    [ $(( now - $(stat -f %m "$f" 2>/dev/null || echo 0) )) -le 120 ] || continue
+    base="${f##*/}"; name="${base#*--}"; name="${name%%--*}"
+    printf '%s %s\n' "$name" "$(stat -f %z "$f" 2>/dev/null || echo 0)"
+  done
+}
+# ut_step_progress STEPLOG — one value that changes whenever the step makes
+# progress: its log grows, or a Homebrew download (bottle or cask) grows.
+ut_step_progress() {
+  local size f dl=0 n
+  size=$(wc -c < "$1" 2>/dev/null); size=${size// /}
+  for f in "$(ut_brew_downloads_dir)"/*.incomplete; do
+    [ -f "$f" ] || continue
+    n=$(stat -f %z "$f" 2>/dev/null) && dl=$((dl + n))
+  done
+  printf '%s:%s\n' "${size:-0}" "$dl"
+}
+
 # Wait on one background step with the stall (+ optional askpass) watchdog.
 # Sets UT_WAIT_RC and UT_WAIT_STALLED.
 ut_watch_pid() {
@@ -6356,7 +6412,7 @@ ut_watch_pid() {
   local last_size last_change size stalled=0 prompt
   UT_WAIT_RC=0
   UT_WAIT_STALLED=0
-  last_size=$(wc -c < "$steplog" 2>/dev/null); last_size=${last_size// /}
+  last_size=$(ut_step_progress "$steplog")
   last_change=$SECONDS
   CUR_PID=$pid
   while kill -0 "$pid" 2>/dev/null; do
@@ -6372,7 +6428,7 @@ ut_watch_pid() {
       fi
     fi
     if [ "${STALL_TIMEOUT:-0}" -gt 0 ] 2>/dev/null; then
-      size=$(wc -c < "$steplog" 2>/dev/null); size=${size// /}
+      size=$(ut_step_progress "$steplog")
       if [ "$size" != "$last_size" ]; then
         last_size=$size; last_change=$SECONDS
       elif [ $(( SECONDS - last_change )) -ge "$STALL_TIMEOUT" ]; then
@@ -6476,7 +6532,7 @@ ut_run_wave() {
     sudo -n -v 2>/dev/null || true
     ut_spawn_step "$i"
     steplog="${UT_STEP_LOG_DIR}/$i.log"
-    w_last_size[i]=$(wc -c < "$steplog" 2>/dev/null); w_last_size[i]=${w_last_size[i]// /}
+    w_last_size[i]=$(ut_step_progress "$steplog")
     w_last_change[i]=$SECONDS
   done
   [ -n "${WEB_DIR:-}" ] && ut_web_state run
@@ -6514,7 +6570,7 @@ ut_run_wave() {
       if kill -0 "$pid" 2>/dev/null; then
         any=1
         if [ "${STALL_TIMEOUT:-0}" -gt 0 ] 2>/dev/null; then
-          size=$(wc -c < "$steplog" 2>/dev/null); size=${size// /}
+          size=$(ut_step_progress "$steplog")
           if [ "$size" != "${w_last_size[i]}" ]; then
             w_last_size[i]=$size; w_last_change[i]=$SECONDS
           elif [ $(( SECONDS - ${w_last_change[i]} )) -ge "$STALL_TIMEOUT" ]; then
@@ -7022,7 +7078,7 @@ run_plain() {
     local -a w_last_size=() w_last_change=()
     for i in "${wave_idx[@]}"; do
       steplog="${UT_STEP_LOG_DIR}/$i.log"
-      w_last_size[i]=$(wc -c < "$steplog" 2>/dev/null); w_last_size[i]=${w_last_size[i]// /}
+      w_last_size[i]=$(ut_step_progress "$steplog")
       w_last_change[i]=$SECONDS
     done
     while true; do
@@ -7034,7 +7090,7 @@ run_plain() {
         if kill -0 "$pid" 2>/dev/null; then
           any=1
           if [ "${STALL_TIMEOUT:-0}" -gt 0 ] 2>/dev/null; then
-            size=$(wc -c < "$steplog" 2>/dev/null); size=${size// /}
+            size=$(ut_step_progress "$steplog")
             if [ "$size" != "${w_last_size[i]}" ]; then
               w_last_size[i]=$size; w_last_change[i]=$SECONDS
             elif [ $(( SECONDS - ${w_last_change[i]} )) -ge "$STALL_TIMEOUT" ]; then

@@ -157,6 +157,7 @@ The report step stays last.
 | `UPDATETOOLS_ENABLED_FILE` | Override path for the saved enabled-step list. |
 | `AUTO_START=1` | `--yes` |
 | `UPDATETOOLS_DURATIONS_FILE` | Override `~/.config/updatetools/durations`, where each step's last run time is kept for the dashboard's time estimate. |
+| `STALL_TIMEOUT` | Seconds a step may show no progress before it is stopped (default `300`, `0` turns it off). A Homebrew download that is still arriving counts as progress, though Homebrew prints nothing while it downloads. |
 | `NOTIFY_MODE=never` | `--no-notify` |
 | `NOTIFY_MODE=on_error` | `--notify-on-error` |
 | `UPDATETOOLS_CLOSE="a b"` | Force-close these cask apps to upgrade them now (space/comma list of tokens). |
@@ -288,8 +289,8 @@ buttons): a headline with its one action, then the sources, then the plan.
   preview its output and click it to keep it open (a running source's output
   follows live). The plan stays under the list for sources still running or
   to run, and each Homebrew item says where it is, read from Homebrew's own
-  output: **Downloaded**, **Installing**, **Updated**, **Restarted**,
-  **Next launch** or **Failed**.
+  output: **Downloading** (with how far it is), **Downloaded**, **Installing**,
+  **Updated**, **Restarted**, **Next launch** or **Failed**.
 - **After the run** the page leads with what needs attention: each failed
   step's own error line (steps that failed for the same reason are grouped),
   with **Retry failed** to run only those steps again while every other result

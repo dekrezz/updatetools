@@ -32,6 +32,7 @@ a pull request without requesting permission.
    bash tests/test_safe_restart.sh
    bash tests/test_design.sh
    bash tests/test_password_prompt.sh
+   bash tests/test_stall_watch.sh
    ```
 
 6. Open a pull request with a clear description of the problem, the solution,
