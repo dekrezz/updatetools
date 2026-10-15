@@ -86,7 +86,16 @@ assert_eq "--no-close waits" "wait|Closing apps is turned off (--no-close)" "$(C
 brew() {
   case "$*" in
     "outdated --cask --greedy --verbose") printf '%s\n' "rect (1.0) != 1.1" "chrome-x (140.0) != 141.0" "self-upd (1.0) != 2.0" ;;
-    "outdated --formula --verbose") printf '%s\n' "node (24.9.0) < 24.10.0" ;;
+    "outdated --formula --verbose") printf '%s\n' "node (24.9.0) < 24.10.0" "herdr (0.9.3) < 0.9.5" "llvm@21 (21.1.8) < 21.1.8_1" ;;
+    "info --formula --json=v2 node herdr llvm@21")
+      cat <<'JSON'
+{"formulae":[
+ {"name":"node","homepage":"https://nodejs.org/"},
+ {"name":"herdr","homepage":"https://herdr.example/"},
+ {"name":"llvm@21","homepage":"https://llvm.example/"}
+]}
+JSON
+      ;;
     "info --cask --json=v2 rect chrome-x self-upd")
       cat <<'JSON'
 {"casks":[
@@ -101,6 +110,16 @@ JSON
 }
 have() { [ "$1" = brew ] || [ "$1" = jq ]; }
 GREEDY=1
+# Each planned program shows its own logo: an app's icon from its bundle, a
+# formula's Simple Icons mark or its site's icon, else nothing (the page draws
+# a monogram). Here the network is down: only the cached site icon is found.
+mkdir -p "$APPS/Rect.app/Contents/Resources"
+cp /System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns "$APPS/Rect.app/Contents/Resources/RectIcon.icns"
+/usr/bin/plutil -insert CFBundleIconFile -string RectIcon "$APPS/Rect.app/Contents/Info.plist"
+export XDG_CACHE_HOME="$tmp/cache"
+mkdir -p "$XDG_CACHE_HOME/updatetools/icons"
+sips -s format png -Z 32 "$APPS/Rect.app/Contents/Resources/RectIcon.icns" --out "$XDG_CACHE_HOME/updatetools/icons/herdr.example" >/dev/null 2>&1
+curl() { echo "curl $*" >> "$tmp/curl"; return 1; }
 mkdir -p "$tmp/plan"
 ut_plan_homebrew "$tmp/plan"
 plan="$(cat "$tmp/plan/homebrew.plan")"
@@ -114,6 +133,29 @@ assert_contains "plan json is not done before the marker" "$json" '"homebrew":{"
 json="$(ut_plan_json "$tmp/plan")"
 assert_contains "plan json done after the marker" "$json" '"homebrew":{"done":true'
 assert_contains "plan json item" "$json" '{"n":"Rectangle","o":"1.0","w":"1.1","act":"restart"'
+assert_contains "a cask's plan line keeps its token and app" "$plan" "|rect|$APPS/Rect.app"
+[ "$(head -c 4 "$tmp/plan/icons/rect.png" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = 89504e47 ] \
+  && pass "an app's icon is written as a PNG" || fail "an app's icon is written as a PNG"
+[ "$(sips -g pixelWidth "$tmp/plan/icons/rect.png" 2>/dev/null | awk '/pixelWidth/ { print $2 }')" -le 64 ] 2>/dev/null \
+  && pass "an app's icon is small" || fail "an app's icon is small"
+python3 - "{\"plan\":$json}" <<'PY' && pass "plan items carry their key and logo" || fail "plan items carry their key and logo"
+import json, sys
+items = {it.get('k'): it for it in json.loads(sys.argv[1])['plan']['homebrew']['items']}
+checks = [
+    ('rect', 'img', 'plan/icons/rect.png'), ('rect', 'app', True),
+    ('chrome-x', 'img', None),
+    ('node', 'slug', 'nodedotjs'),
+    ('herdr', 'img', 'plan/icons/herdr.png'), ('herdr', 'app', None),
+    ('llvm@21', 'img', None), ('llvm@21', 'slug', None),
+]
+bad = [f'{k}.{f}={items.get(k, {}).get(f)!r}, want {v!r}' for k, f, v in checks if items.get(k, {}).get(f) != v]
+print('\n'.join('not ok - ' + b for b in bad))
+sys.exit(1 if bad else 0)
+PY
+[ -s "$tmp/plan/icons/herdr.png" ] && pass "a cached site icon is copied for the page" || fail "a cached site icon is copied for the page"
+UT_PLAN_DIR="$tmp/plan"
+printf '%s\n' "rect|Rectangle|1.0|1.1||restarted" > "$tmp/updates.txt"
+assert_contains "the record shows the app's own icon" "$(ut_web_updates "$tmp/updates.txt")" '"img":"plan/icons/rect.png","app":true'
 python3 -c 'import json,sys; json.loads(sys.argv[1])' "{\"plan\":$json}" && pass "plan json parses" || fail "plan json parses"
 
 # ---------------------------------------------------------------------------
@@ -355,6 +397,81 @@ ok('a rejected retry is marked as a problem', $('phase').classList.contains('los
 process.exit(fails ? 1 : 0);
 NODE
 [ $? -eq 0 ] && pass "page layout and states" || fail "page layout and states"
+
+# ---------------------------------------------------------------------------
+# the plan during the run: each program's own logo and where it is right now
+# ---------------------------------------------------------------------------
+node - "$tmp/page.html" <<'NODE'
+const fs = require('fs');
+const html = fs.readFileSync(process.argv[2], 'utf8');
+let fails = 0;
+const ok = (n, cond) => { console.log((cond ? 'ok - ' : 'not ok - ') + n); if (!cond) fails++; };
+const pick = (from, to) => {
+  const a = html.indexOf(from), b = html.indexOf(to, a + 1);
+  if (a < 0 || b < 0) { console.log('not ok - helper ' + from + ' not found'); process.exit(1); }
+  return html.slice(a, b);
+};
+// Homebrew's own markers (formulae, then the casks loop's per-app lines).
+const section = [
+  '==> Fetching downloads for: node, herdr, llvm@21',
+  '✔︎ Bottle node (24.10.0)',
+  '✔︎ Bottle llvm@21 (21.1.8_1)',
+  '==> Upgrading node',
+  '  24.9.0 -> 24.10.0',
+  '==> Pouring node--24.10.0.arm64_tahoe.bottle.tar.gz',
+  '🍺  /opt/homebrew/Cellar/node/24.10.0: 2,000 files, 70MB',
+  '==> Upgrading k1low/tap/tbls',
+  '🍺  /opt/homebrew/Cellar/tbls/1.74.2: 9 files, 30MB',
+  '>> rect: running & safe to restart — quitting, upgrading, relaunching',
+  '==> Upgrading rect',
+  '🍺  rect was successfully upgraded!',
+  '   restarted on the new version',
+  '>> idle: running & protected — staging (new version applies on next launch)',
+  '🍺  idle was successfully upgraded!',
+  '>> broken: not running — upgrading in place',
+  'Error: broken: Download failed',
+  '>> chatgpt: not running — upgrading in place',
+  '==> Downloading https://persistent.oaistatic.com/sidekick/public/ChatGPT.dmg',
+].join('\n');
+const items = ['node', 'llvm@21', 'k1low/tap/tbls', 'rect', 'idle', 'broken', 'chatgpt', 'herdr'].map((k) => ({ k, n: k }));
+eval(pick('function planProgress(', '\n  }\n') + '\n  }');
+const live = planProgress(section, items);
+ok('a poured formula is updated', live.node === 'done');
+ok('a downloaded bottle is not yet installed', live['llvm@21'] === 'got');
+ok('a tap formula matches its Cellar name', live['k1low/tap/tbls'] === 'done');
+ok('a restarted app says so', live.rect === 'restarted');
+ok('a staged app waits for the next launch', live.idle === 'staged');
+ok('an error while a cask is in hand fails it', live.broken === 'fail');
+ok('the cask in hand is installing', live.chatgpt === 'run');
+ok('a package not reached yet has no state', live.herdr === undefined);
+
+// the row: the program's logo, and the live state in place of the plan chip
+const document = { getElementById: () => ({}) };
+const window = {};
+eval(pick('const ICON = {', '\n  };\n') + '\n  };');
+eval(pick('function escapeHtml(', '\n  }\n') + '\n  }');
+eval(pick('function versionMarkup(', 'function escapeHtml('));
+eval(pick('function logo(', 'function prettyTail('));
+const plural = (n, a, b) => `${n} ${n === 1 ? a : b}`;
+eval(pick('const ACT = {', 'function planFor('));
+eval(pick('function planRows(', 'function planBlock('));
+const rows = planRows([
+  { k: 'rect', n: 'Rectangle', o: '1.0', w: '1.1', act: 'restart', img: 'plan/icons/rect.png', app: true },
+  { k: 'node', n: 'node', o: '24.9.0', w: '24.10.0', act: 'update', slug: 'nodedotjs' },
+  { k: 'chatgpt', n: 'ChatGPT', o: '1', w: '2', act: 'update' },
+  { k: 'herdr', n: 'herdr', o: '0.9.3', w: '0.9.5', act: 'update' },
+], { rect: 'restarted', node: 'done', chatgpt: 'run' });
+const row = (k) => (rows.match(new RegExp(`<div class="row[^"]*" data-k="${k}"[\\s\\S]*?(?=<div class="row|$)`)) || [''])[0];
+ok('an app shows its own icon', /class="logo app-logo"><img src="plan\/icons\/rect.png"/.test(row('rect')));
+ok('a formula shows its mark', /<use href="#i-nodedotjs"\/>/.test(row('node')));
+ok('a program with no logo gets a monogram', /class="logo mono">C</.test(row('chatgpt')));
+ok('the package in hand is marked as installing', /class="row run"/.test(row('chatgpt')) && />Installing</.test(row('chatgpt')));
+ok('an updated package says so', />Updated</.test(row('node')) && !/>Installs</.test(row('node')));
+ok('a restarted app says so', />Restarted</.test(row('rect')));
+ok('a package not reached yet keeps its plan', />Installs</.test(row('herdr')));
+process.exit(fails ? 1 : 0);
+NODE
+[ $? -eq 0 ] && pass "plan rows show logos and live progress" || fail "plan rows show logos and live progress"
 
 if [ "$failures" -eq 0 ]; then
   echo "all dashboard plan tests passed"
