@@ -308,6 +308,11 @@ ok('the live output box has a bounded height, so it can follow new lines',
 ok('the live output box scrolls', /auto|scroll/.test(prop(logRule, 'overflow')));
 ok('a failure card heading row wraps', prop(rule('.fail-card .who'), 'flex-wrap') === 'wrap');
 ok('a failure card button row wraps', prop(rule('.fail-card .tools'), 'flex-wrap') === 'wrap');
+// A see-through sheet still takes Tab and Enter: its Continue would post an
+// empty password with no prompt pending. Closed, it must be out of reach.
+const scrimRule = rule('.scrim');
+ok('the closed password sheet is out of the tab order',
+  prop(scrimRule, 'visibility') === 'hidden' || prop(scrimRule, 'display') === 'none');
 
 // the forecast under the output: only the viewed step's, and only before it ran
 let planFor = (st, key) => (st.plan || {})[key];
