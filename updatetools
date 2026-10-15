@@ -4625,8 +4625,15 @@ WEB_HTML_HEAD
     chal = [];
     setRevealed(false);
   }
-  let pwReturn = null;
-  function askPassword(prompt) {
+  // A poll that left before the run read the answer still carries the prompt
+  // just answered; only a prompt with another number opens the sheet.
+  function freshPrompt(st, answered) {
+    return !!st.prompt && st.ask !== answered;
+  }
+  let pwReturn = null, askingAsk = null, answeredAsk = null;
+  function askPassword(prompt, ask) {
+    // The reply answers whichever prompt is current, so track the latest one.
+    askingAsk = ask;
     if (asking) return;
     asking = true;
     const again = /again|wrong|sorry/i.test(prompt);
@@ -4653,6 +4660,7 @@ WEB_HTML_HEAD
   async function submitChal() {
     // Only an open prompt has a reply; a stray submit must not answer the next one.
     if (!asking) return;
+    answeredAsk = askingAsk;
     const reply = chal.join('');
     hidePassword();
     try {
@@ -4930,10 +4938,10 @@ WEB_HTML_HEAD
       misses = 0;
       render(st);
       renderFiles(st);
-      if (st.prompt) {
-        askPassword(st.prompt);
+      if (freshPrompt(st, answeredAsk)) {
+        askPassword(st.prompt, st.ask);
         applyLayout(st.layoutNow || '', st.layoutPass || 'English');
-      } else if (asking) hidePassword();
+      } else if (asking && !st.prompt) hidePassword();
       loadLog();
       if (st.phase === 'done' && (st.steps || []).some((s) => s.s === 'fail')) loadFailReasons(st);
       if ((st.phase === 'done' && !retrySent) || st.phase === 'error') { setTimeout(poll, 1500); return; }
@@ -5337,7 +5345,7 @@ ut_web_state() {
       printf ',"message":"%s"' "$(ut_json_escape "${UT_WEB_ERROR:-sudo password required but not accepted — aborting before steps.}")"
     fi
     printf ',"tail":"%s"' "$(ut_json_escape "$tail_line")"
-    [ -n "${UT_PROMPT:-}" ] && printf ',"prompt":"%s"' "$(ut_json_escape "$UT_PROMPT")"
+    [ -n "${UT_PROMPT:-}" ] && printf ',"prompt":"%s","ask":%d' "$(ut_json_escape "$UT_PROMPT")" "${UT_PROMPT_SEQ:-0}"
     if [ -n "${UT_PROMPT:-}" ]; then
       [ -n "${UT_LAYOUT_NOW:-}" ] && printf ',"layoutNow":"%s"' "$(ut_json_escape "$UT_LAYOUT_NOW")"
       [ -n "${UT_LAYOUT_PASS:-}" ] && printf ',"layoutPass":"%s"' "$(ut_json_escape "$UT_LAYOUT_PASS")"
@@ -5391,6 +5399,9 @@ ut_web_ask() {
     return 0
   fi
   UT_PROMPT="${1:-Password:}"
+  # Each prompt gets its own number: a page poll that left before the answer
+  # was read still carries this prompt, and must not open the sheet again.
+  UT_PROMPT_SEQ=$(( ${UT_PROMPT_SEQ:-0} + 1 ))
   rm -f "$PROMPT_REP"
   ut_read_input_source
   local seen="${UT_LAYOUT_NOW}"
