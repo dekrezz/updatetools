@@ -2,8 +2,9 @@
 # The dashboard and the HTML report speak Antigravity's design language (the
 # 2026.10.10 restyle): Google Sans Flex first with a system fallback, #121317
 # ink on white (the reverse in dark), 24px cards, pill controls, the logo
-# gradient for a run where every step completed, and one centred column with
-# the theme switch pinned to the corner. Features added later keep this look.
+# gradient for a run where every step completed, the main column at its width
+# with the History sidebar (an <aside> labelled "History") beside it, and the
+# theme switch pinned to the corner. Features added later keep this look.
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -62,7 +63,10 @@ ok('dashboard cards are 24px', var(page, 'r-lg') == '24px' and 'var(--r-lg)' in 
 ok('dashboard controls are pills', var(page, 'r-pill') == '9999px')
 ok('a clean run fills the ribbon with the logo gradient',
    var(page, 'logo').startswith('linear-gradient(90deg,#FC413D') and ':not(:has(.seg:not(.done))) .seg' in page)
-ok('dashboard is one centred column', 'calc(720px + 3rem)' in rule(page, '.wrap') and '<aside' not in page)
+ok('the main column keeps its width', 'calc(720px + 3rem)' in rule(page, '.wrap'))
+aside = re.search(r'<aside\b[^>]*\baria-labelledby="([^"]+)"', page)
+ok('the History sidebar is an <aside> labelled by its heading "History"', aside is not None and re.search(
+   r'<h[1-6]\b[^>]*\bid="' + re.escape(aside.group(1)) + r'"[^>]*>\s*History\s*</h[1-6]>', page) is not None)
 ok('theme switch is pinned to the corner', 'position:fixed' in rule(page, '.theme-switch'))
 
 # report

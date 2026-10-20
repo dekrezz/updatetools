@@ -38,6 +38,8 @@ a pull request without requesting permission.
    bash tests/test_network_halt.sh
    bash tests/test_interrupts.sh
    bash tests/test_halt_page.sh
+   bash tests/test_history_page.sh
+   bash tests/test_history.sh
    ```
 
 6. Open a pull request with a clear description of the problem, the solution,
