@@ -86,6 +86,8 @@ assert_eq "unsafe running app never gets a quit event" "" "$(cat "$quit_log")"
 unset -f graceful_quit ut_restart_safe
 # shellcheck source=../updatetools
 source "$ROOT/updatetools"
+# Sourcing again sets updatetools' own EXIT trap (cleanup); keep it and remove $tmp too.
+trap 'cleanup; rm -rf "$tmp"' EXIT
 is_running() { return 0; }
 manual_impl="$(declare -f ut_update_manual_apps; declare -f ut_install_or_defer; declare -f ut_spawn_deferred_swap)"
 assert_not_contains "manual updater never uses AppleScript directly" "$manual_impl" "osascript"

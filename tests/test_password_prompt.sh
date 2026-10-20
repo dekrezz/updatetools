@@ -8,6 +8,9 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d /tmp/updatetools-prompt.XXXXXX)"
+# updatetools keeps its scratch files (the run log) in TMPDIR: inside $tmp, they go with it.
+export TMPDIR="$tmp/scratch"
+mkdir -p "$TMPDIR"
 asker=""
 
 export UPDATETOOLS_LIB_ONLY=1

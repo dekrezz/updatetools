@@ -34,7 +34,7 @@ assert_not_contains() {
 }
 
 tmp="$(mktemp -d /tmp/updatetools-schedule-test.XXXXXX)"
-trap 'rm -rf "$tmp"' EXIT
+trap 'cleanup; rm -rf "$tmp"' EXIT
 
 assert_eq "default interval is 24h" "interval 86400" "$(ut_parse_interval "")"
 assert_eq "bare seconds" "interval 3600" "$(ut_parse_interval "3600")"
