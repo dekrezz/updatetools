@@ -158,6 +158,8 @@ The report step stays last.
 | `UPDATETOOLS_ENABLED_FILE` | Override path for the saved enabled-step list. |
 | `AUTO_START=1` | `--yes` |
 | `UPDATETOOLS_DURATIONS_FILE` | Override `~/.config/updatetools/durations`, where each step's last run time is kept for the dashboard's time estimate. |
+| `UPDATETOOLS_HISTORY_FILE` | Override `~/.config/updatetools/history`, where the [run history](#run-history) is kept. |
+| `HISTORY_KEEP` | How many runs the history keeps (default `200`). |
 | `STALL_TIMEOUT` | Seconds a step may show no progress before it is stopped (default `300`, `0` turns it off). A Homebrew download that is still arriving counts as progress, though Homebrew prints nothing while it downloads. |
 | `NET_TIMEOUT` | Seconds without a network connection before the run stops (default `30`, `0` turns the network watch off). |
 | `STOP_GRACE` | Seconds a tool that is asked to stop gets to exit before it is killed (default `30`). |
@@ -324,6 +326,34 @@ The log and HTML report live in a temp dir that goes away when the run ends.
 A deferred DMG update temporarily leaves its verified staged app and one-shot
 helper on disk; both are removed after the natural app exit and atomic swap.
 Pass `--debug` to keep the log and report.
+
+### Run history
+
+Every run in which at least one step ran is recorded for the dashboard's
+**History** panel, whether it ran from the dashboard or without it (`--plain`,
+a scheduled run). The record says when its steps started, how long it took and
+how it ended: finished, with a failed step, or stopped and why (network lost,
+or Ctrl+C / `kill` / a closed terminal). It lists each step that ran with its
+outcome and time, and each update the report found, with the old and new
+version and the release-notes link. A **Retry failed** or **Continue** round
+rewrites the same run's record instead of adding one.
+
+The records are JSON lines in `~/.config/updatetools/history`, oldest first.
+After every write only the newest `HISTORY_KEEP` runs (default `200`) remain.
+
+Not recorded:
+
+- a run in which no step ran, or only Report: the password was rejected, the
+  tab was closed before **Start update**, there was no network when the steps
+  were about to start, or no step was selected;
+- a run killed with `kill -9`, which gives it no chance to write anything.
+
+If the file cannot be written, the run goes on and the terminal says
+`updatetools: could not record this run in <file>: <reason>`. A line in the
+file that is not a valid run record (after a hand edit, say) is never repaired
+or dropped: the History panel shows the file and the line number instead of the
+history, the terminal says the same when the dashboard opens, and new runs are
+still added. Fix or delete that line to see the history again.
 
 
 ## When a run is interrupted

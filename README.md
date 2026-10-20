@@ -57,6 +57,7 @@ Tools you don't have are skipped. At the end you see exactly what changed.
 - **Root only where needed.** sudo is dropped before npm, cargo, uv and other package updates run. [Details](SECURITY.md#what-updatetools-does-on-your-mac)
 - **Stops cleanly when interrupted.** If the network drops for 30 s, or you press Ctrl+C, kill the run or close its terminal, the running tool is asked to stop and given time to exit on its own, nothing else starts, and both the dashboard and the terminal say what happened. [Details](docs/USAGE.md#when-a-run-is-interrupted)
 - **Nothing to clean up.** Logs and the report are temporary unless you pass `--debug`, or a run stops or fails: then its log and a report are kept in `~/Library/Logs/updatetools`.
+- **Remembers past runs.** The dashboard's History panel shows what each run updated, whether anything failed and how long it took, from the newest 200 runs kept in `~/.config/updatetools/history`. [Details](docs/USAGE.md#run-history)
 
 ## Common options
 

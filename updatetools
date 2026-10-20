@@ -78,6 +78,8 @@ STOP_GRACE="${STOP_GRACE:-30}"
 # A run that stops or fails keeps its log and a report here (newest DIAG_KEEP).
 DIAG_DIR="${DIAG_DIR:-$HOME/Library/Logs/updatetools}"
 DIAG_KEEP="${DIAG_KEEP:-20}"
+# The dashboard's History keeps the newest HISTORY_KEEP runs (ut_history_file).
+HISTORY_KEEP="${HISTORY_KEEP:-200}"
 # Comma/space lists of step keys for this run only (do not rewrite the saved set
 # unless the dashboard Start control confirms a selection).
 ONLY_STEPS=""
@@ -5525,6 +5527,155 @@ ut_save_durations() {
   return 0
 }
 
+# The run history, for the dashboard's History panel: one JSON line per run in
+# which a step ran, oldest first; only the newest HISTORY_KEEP lines are kept.
+ut_history_file() {
+  printf '%s\n' "${UPDATETOOLS_HISTORY_FILE:-$HOME/.config/updatetools/history}"
+}
+
+# ut_history_record — write this run's record: the steps that ran (never the
+# report) and the report's records. A retry round rewrites the same record:
+# the steps it ran replace their entries, its updates merge by key (the latest
+# wins), its time is added and the outcome is worked out again. A round in
+# which no step ran leaves the record as it was.
+ut_history_record() {
+  local i j s e name slug ran="" steps="" up="" out=ok id line key display old new url state
+  for ((i=0;i<TOTAL;i++)); do
+    [ "${STEP_ON[i]:-1}" = "1" ] || continue
+    [ "${STEP_KEY[i]}" != "report" ] || continue
+    case "${STATUS[i]:-}:${STEP_WHY[i]:-}" in
+      fail:stopped) s=stopped ;;
+      done:*|fail:*|staged:*) s="${STATUS[i]}" ;;
+      *) continue ;;
+    esac
+    ran=1
+    name="$(ut_step_name "$i")"
+    # run_plain looks no logos up.
+    slug="${STEP_SLUG[i]:-}"; [ -n "$slug" ] || slug="$(ut_icon_slug "$name")"
+    e="{\"k\":\"$(ut_json_escape "${STEP_KEY[i]}")\",\"n\":\"$(ut_json_escape "$name")\",\"s\":\"$s\""
+    [ -n "${STEP_SEC[i]:-}" ] && e+=",\"t\":${STEP_SEC[i]}"
+    [ -n "$slug" ] && e+=",\"slug\":\"$slug\""
+    UT_HIST_STEP[i]="$e}"; UT_HIST_STEP_S[i]="$s"
+  done
+  [ -n "$ran" ] || return 0
+  if [ -z "${UT_RUN_AT:-}" ]; then
+    printf 'updatetools: could not record this run in %s: the time its steps started is unknown (UT_RUN_AT is empty)\n' \
+      "$(ut_history_file)" >&2
+    return 1
+  fi
+  # The report's records, read as ut_web_updates reads them; no icons.
+  if [ -r "${UT_WEB_DATA:-}" ]; then
+    while IFS='|' read -r key display old new url state || [ -n "${key:-}" ]; do
+      [ -n "${key:-}" ] || continue
+      display=$(ut_pretty_name "$key" "${display:-$key}")
+      slug="$(ut_icon_slug "$display")"
+      e="{\"k\":\"$(ut_json_escape "$key")\",\"n\":\"$(ut_json_escape "$display")\""
+      e+=",\"o\":\"$(ut_json_escape "${old%%,*}")\",\"w\":\"$(ut_json_escape "${new%%,*}")\""
+      case "${state:-}" in staged|restarted) e+=",\"st\":\"$state\"" ;; esac
+      case "${url:-}" in https://*|http://*) e+=",\"u\":\"$(ut_json_escape "$url")\"" ;; esac
+      [ -n "$slug" ] && e+=",\"slug\":\"$slug\""
+      j=0
+      while [ "$j" -lt "${#UT_HIST_UP_KEY[@]}" ] && [ "${UT_HIST_UP_KEY[j]}" != "$key" ]; do j=$((j+1)); done
+      UT_HIST_UP_KEY[j]="$key"; UT_HIST_UP[j]="$e}"
+    done < "$UT_WEB_DATA"
+  fi
+  for ((i=0;i<TOTAL;i++)); do
+    [ -n "${UT_HIST_STEP[i]:-}" ] || continue
+    steps="${steps:+$steps,}${UT_HIST_STEP[i]}"
+    [ "${UT_HIST_STEP_S[i]}" = "fail" ] && out=fail
+  done
+  [ -n "${UT_HALT:-}" ] && out=halted
+  for ((j=0;j<${#UT_HIST_UP[@]};j++)); do up="${up:+$up,}${UT_HIST_UP[j]}"; done
+  # What the dashboard clock shows at the end, added up over the rounds.
+  UT_HIST_SEC=$(( UT_HIST_SEC0 + ${UT_T_END:-$SECONDS} - T0 ))
+  id="$UT_RUN_AT-$$"
+  line="{\"v\":1,\"id\":\"$id\",\"at\":$UT_RUN_AT,\"sec\":$UT_HIST_SEC,\"mode\":\"$UT_RUN_MODE\",\"out\":\"$out\""
+  [ "$out" = "halted" ] && line+=",\"halt\":\"$(ut_json_escape "$UT_HALT")\""
+  line+=",\"steps\":[$steps],\"up\":[$up]}"
+  ut_history_save "$id" "$line" || return 1
+  UT_HIST_ID="$id"; UT_HIST_REV=$((UT_HIST_REV + 1))
+  # Before the state.json that names this revision: the page reads history.json
+  # once for each {id, rev} it has not seen.
+  if [ "$UT_RUN_MODE" = "dashboard" ]; then ut_history_serve; fi
+}
+
+# ut_history_save ID LINE — LINE becomes run ID's line in the history file: it
+# replaces the one a retry rewrites, else it is appended, and only the newest
+# HISTORY_KEEP lines remain. Lines that are not run records stay as they are.
+# If the file cannot be written the run goes on, and the terminal says why.
+ut_history_save() {
+  local f why
+  f="$(ut_history_file)"
+  case "${HISTORY_KEEP:-}" in
+    ''|*[!0-9]*|0) why="HISTORY_KEEP must be a number of runs above 0, not '${HISTORY_KEEP:-}'" ;;
+    *) why="$(ut_history_write "$f" "$1" "$2" 2>&1)" && return 0 ;;
+  esac
+  printf 'updatetools: could not record this run in %s: %s\n' "$f" "$(printf '%s' "$why" | tr '\n' ' ')" >&2
+  return 1
+}
+# ut_history_write FILE ID LINE — ut_history_save's work; what fails says why.
+ut_history_write() {
+  local f="$1" src="$1" dir tmp
+  dir="$(dirname "$f")"; tmp="$f.tmp.$$"
+  mkdir -p "$dir" || return 1
+  [ -w "$dir" ] || { echo "$dir is not writable"; return 1; }
+  [ -e "$f" ] || src=/dev/null
+  # The line goes through the environment: awk -v would undo its JSON escapes.
+  UT_HIST_LINE="$3" awk -v p="{\"v\":1,\"id\":\"$2\"," -v keep="$HISTORY_KEEP" '
+    index($0, p) != 1 { l[n++] = $0 }
+    END { l[n++] = ENVIRON["UT_HIST_LINE"]; for (i = (n > keep + 0 ? n - keep : 0); i < n; i++) print l[i] }
+  ' "$src" > "$tmp" && mv -f "$tmp" "$f" && return 0
+  rm -f "$tmp"
+  return 1
+}
+
+# ut_history_json [tell] — the history for the page, {"v":1,"runs":[...]},
+# newest first. A line that is not a run record is reported, never skipped or
+# repaired: {"v":1,"error":"FILE: line N is not a valid run record"}. With
+# tell, the terminal is told the same.
+ut_history_json() {
+  python3 -I - "$(ut_history_file)" "${1:-}" <<'HISTORY_PY'
+import json, sys
+path, tell = sys.argv[1], sys.argv[2] == 'tell'
+
+def unavailable(why):
+    msg = '%s: %s' % (path, why)
+    if tell:
+        sys.stderr.write('updatetools: the dashboard cannot show the run history: %s\n' % msg)
+    print(json.dumps({'v': 1, 'error': msg}, separators=(',', ':')))
+    sys.exit(0)
+
+def not_json(name):
+    raise ValueError(name)  # NaN and Infinity, which json.loads lets through
+
+try:
+    with open(path, encoding='utf-8', errors='replace') as f:
+        lines = f.read().split('\n')
+except FileNotFoundError:
+    lines = []
+except OSError as e:
+    unavailable('cannot be read (%s)' % (e.strerror or e))
+if lines and lines[-1] == '':
+    lines.pop()
+runs = []
+for n, line in enumerate(lines, 1):
+    try:
+        run = json.loads(line, parse_constant=not_json)
+    except (ValueError, RecursionError):
+        run = None
+    if not (isinstance(run, dict) and type(run.get('v')) is int and run['v'] == 1):
+        unavailable('line %d is not a valid run record' % n)
+    runs.append(run)
+runs.reverse()
+print(json.dumps({'v': 1, 'runs': runs}, separators=(',', ':')))
+HISTORY_PY
+}
+
+# ut_history_serve [tell] — publish the history as $WEB_DIR/history.json, whole.
+ut_history_serve() {
+  ut_history_json "${1:-}" > "$WEB_DIR/.history.tmp" && mv -f "$WEB_DIR/.history.tmp" "$WEB_DIR/history.json"
+}
+
 # ut_log_tail FILE — the last meaningful output line (no banners, no bars).
 ut_log_tail() {
   tail -n 40 "$1" 2>/dev/null | tr -d '\r' \
@@ -5637,6 +5788,7 @@ ut_web_state() {
     fi
     [ "${AUTO_START:-0}" = "1" ] && printf ',"auto":true'
     [ -n "${UT_RUN_ROUND:-}" ] && printf ',"round":%d' "$UT_RUN_ROUND"
+    [ -n "${UT_HIST_ID:-}" ] && printf ',"hist":{"id":"%s","rev":%d}' "$UT_HIST_ID" "$UT_HIST_REV"
     printf ',"debug":%s' "$([ "${DEBUG:-0}" = "1" ] && echo true || echo false)"
     [ "${DEBUG:-0}" = "1" ] && printf ',"log":"%s"' "$(ut_json_escape "$LOG")"
     [ "${DEBUG:-0}" = "1" ] && [ -n "${UT_WEB_REPORT:-}" ] && printf ',"report":"%s"' "$(ut_json_escape "$UT_WEB_REPORT")"
@@ -5967,6 +6119,8 @@ ut_web_start() {
   WEB_DIR=$(mktemp -d "${TMPDIR:-/tmp}/updatetools-web.XXXXXX") || return 1
   ut_web_page > "$WEB_DIR/index.html" || return 1
   ut_web_state "choose"
+  # Before the browser opens, so the page's first read finds it.
+  ut_history_serve tell || return 1
 
   ut_web_server_py > "$WEB_DIR/serve.py"
 
@@ -6390,6 +6544,12 @@ UT_HALT=""; UT_HALT_CAUSE=""; UT_HALT_MSG=""; UT_DIAG=""; UT_SIGNAL=""; UT_STOP_
 UT_NET_ON=""; UT_NET_DOWN_SINCE=""; UT_NET_WHY=""; UT_NET_PROBE_PID=""; UT_NET_LAST=""
 UT_NET_FILE="${TMPDIR:-/tmp}/updatetools-net-$$"; UT_PREV_WARN=""; STEP_RC=(); STEP_FORCED=(); STEP_PID=()
 UT_RUN_DONE=""
+# When the steps started (epoch) and how: dashboard or plain. Then this run's
+# history record (ut_history_record): its id once written, how often it was
+# written, its time before this round, and its steps' and updates' entries.
+UT_RUN_AT=""; UT_RUN_MODE=""
+UT_HIST_ID=""; UT_HIST_REV=0; UT_HIST_SEC=0; UT_HIST_SEC0=0
+UT_HIST_STEP=(); UT_HIST_STEP_S=(); UT_HIST_UP_KEY=(); UT_HIST_UP=()
 LOCK_BASE="${TMPDIR:-/tmp}/updatetools.lock"
 UT_WEB_DATA="${TMPDIR:-/tmp}/updatetools-updates-$$.txt"
 export UT_WEB_DATA
@@ -7226,6 +7386,8 @@ ut_on_signal() {
   # After the run, Ctrl+C is how the dashboard run is left: nothing to stop.
   if [ -n "${UT_RUN_DONE:-}" ]; then
     trap - INT TERM HUP
+    # The steps are over; their record may still wait for the report's diff.
+    [ -n "${UT_HIST_ID:-}" ] || ut_history_record
     cleanup
     case "$sig" in TERM) exit 143 ;; HUP) exit 129 ;; *) exit 130 ;; esac
   fi
@@ -7270,6 +7432,7 @@ ut_end_on_signal() {
     ut_diag_save
     printf '\nupdatetools: stopped. %s\n  Diagnostics: %s\n' "$UT_HALT_MSG" "${UT_DIAG:-not saved}" >&2
   fi
+  ut_history_record
   if [ -n "${WEB_DIR:-}" ] && [ -d "$WEB_DIR" ]; then
     ut_web_state done
     # The page polls every 0.4 s: give it the last word before the server
@@ -7541,6 +7704,7 @@ export GIT_TERMINAL_PROMPT=0
   ut_preflight_settle
   ut_net_gate
   T0=$SECONDS; UT_CLOCK_HELD=""
+  UT_RUN_AT="$(date +%s)"; UT_RUN_MODE=dashboard
 
   # Before any step, including when Homebrew itself is turned off.
   ut_report_capture_cli
@@ -7566,6 +7730,7 @@ export GIT_TERMINAL_PROMPT=0
   fi
   [ -r "${UT_LASTREPORT:-/nonexistent}" ] && UT_WEB_REPORT="$(cat "$UT_LASTREPORT" 2>/dev/null)"
   [ -r "${UT_WEB_DATA:-/nonexistent}" ] && UT_WEB_UPDATES="$(ut_web_updates "$UT_WEB_DATA")"
+  ut_history_record
   ut_web_state done
   # One notification for the whole run (not per step), once we know the outcome.
   UT_RUN_FAILS=$fail_n
@@ -7657,6 +7822,7 @@ ut_web_retry() {
   UT_RUN_DONE=""; UT_SIGNAL=""
   UT_WEB_UPDATES_PREV="${UT_WEB_UPDATES:-}"
   T0=$SECONDS; UT_T_END=""; UT_CLOCK_HELD=1
+  UT_HIST_SEC0=$UT_HIST_SEC
   ut_web_state run
   local sudo_ok=1
   if ut_needs_sudo; then
@@ -7683,6 +7849,9 @@ ut_web_retry() {
     [ -r "${UT_WEB_DATA:-/nonexistent}" ] && fresh="$(ut_web_updates "$UT_WEB_DATA")"
     UT_WEB_UPDATES="${UT_WEB_UPDATES_PREV}"
     [ -n "$fresh" ] && UT_WEB_UPDATES="${UT_WEB_UPDATES:+$UT_WEB_UPDATES,}$fresh"
+    # While the steps this round ran are still the selected ones, before the
+    # other steps' results come back.
+    ut_history_record
   fi
   for ((i=0;i<TOTAL;i++)); do
     if [ "${STEP_ON[i]}" = "1" ] && [ "$sudo_ok" = "1" ]; then
@@ -7735,6 +7904,7 @@ run_plain() {
   fi
   ut_net_gate
   T0=$SECONDS
+  UT_RUN_AT="$(date +%s)"; UT_RUN_MODE=plain
 
   ut_report_capture_cli
   ut_report_capture_brew
@@ -7994,6 +8164,7 @@ run_plain() {
   done
   note "$done_n done · $staged_n staged · $skip_n skipped · $fail_n failed · $(fmt_time $((SECONDS-T0))) elapsed"
   [ -n "${UT_DIAG:-}" ] && note "diagnostics: $UT_DIAG"
+  ut_history_record
   UT_RUN_FAILS=$fail_n
   local notified
   ut_notify_end "$fail_n"; notified=$?
