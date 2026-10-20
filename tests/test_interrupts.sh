@@ -56,6 +56,7 @@ STEP_KEY=(homebrew npm report); STEP_ON=(1 1 1); TOTAL=3
 STATUS=(pending pending pending); STEP_WHY=("" "" "")
 sudo() { return 0; }
 osascript() { printf '%s\n' "$*" >> "$RUN/notified"; }
+ut_net_probe() { echo up; }
 STALL_TIMEOUT=0; STOP_GRACE=10; DIAG_DIR="$RUN/diag"
 mkdir -p "$RUN/web"; WEB_DIR="$RUN/web"
 ut_run_steps
@@ -113,6 +114,41 @@ check_stopped "closed terminal" 129 "$rc"
 grep -qi "terminal" "$RUN/notified" 2>/dev/null && pass "closed terminal: a notification says why the run stopped" \
   || fail "closed terminal: a notification says why the run stopped"
 
+# Ctrl+C once the run has finished is how the dashboard run is left: no stop,
+# no diagnostics, no warning.
+cat > "$tmp/after.sh" <<'EOF'
+RUN="$1"
+set --
+export UPDATETOOLS_LIB_ONLY=1
+source "$ROOT/updatetools"
+STEPS=("npm · update globals¦true¦:" "Report¦true¦:")
+STEP_KEY=(npm report); STEP_ON=(1 1); TOTAL=2
+AUTO_START=1; NET_TIMEOUT=0; STALL_TIMEOUT=0; DIAG_DIR="$RUN/diag"
+ut_web_start() { WEB_DIR="$RUN/web"; mkdir -p "$WEB_DIR"; ( exec sleep 60 ) & WEB_PID=$!; WEB_OPENED=1; }
+ut_web_stop() { kill "$WEB_PID" 2>/dev/null; }
+ut_icon_site() { :; }
+ut_needs_sudo() { return 1; }
+ut_save_enabled() { :; }
+ut_preflight() { :; }
+ut_report_capture_cli() { :; }
+ut_report_capture_brew() { :; }
+ut_generate_report() { :; }
+ut_notify_end() { :; }
+ut_save_durations() { :; }
+ut_web_summary_line() { : > "$RUN/finished"; }
+run_web
+EOF
+RUN="$tmp/after"; mkdir -p "$RUN"
+python3 -c 'import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+os.execvp("bash", ["bash"] + sys.argv[1:])' "$tmp/after.sh" "$RUN" > "$RUN/out" 2> "$RUN/err" &
+RUN_PID=$!
+wait_for_file "$RUN/finished" || fail "after the run: the run finished"
+kill -INT "$RUN_PID"; wait "$RUN_PID"; rc=$?
+[ "$rc" = "130" ] && pass "after the run: Ctrl+C exits" || fail "after the run: Ctrl+C exits (rc $rc)"
+grep -qi "stopp" "$RUN/err" && fail "after the run: no stop is reported ($(cat "$RUN/err"))" || pass "after the run: no stop is reported"
+ls "$RUN"/diag/* >/dev/null 2>&1 && fail "after the run: no diagnostics are saved" || pass "after the run: no diagnostics are saved"
+
 # kill -9: the dashboard server stops what the run left behind.
 G="$tmp/guard"; mkdir -p "$G"
 ut_web_server_py > "$G/serve.py"
@@ -124,6 +160,7 @@ wait_for_file "$G/brew.started" || fail "kill -9: the step started"
 bash -c 'python3 "$1/serve.py" "$1" "$1/.token" "$1/rep" 75 "$2" 5 > "$1/port" 2>/dev/null & echo $! > "$1/server.pid"; exec sleep 300' \
   _ "$G" "$tmp/tty" &
 main=$!
+disown "$main"
 wait_for_file "$G/port" && sleep 0.3
 kill -KILL "$main"
 n=0; while [ ! -f "$G/brew.rolled" ] && [ "$n" -lt 80 ]; do sleep 0.1; n=$((n + 1)); done

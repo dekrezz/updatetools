@@ -158,6 +158,10 @@ The report step stays last.
 | `AUTO_START=1` | `--yes` |
 | `UPDATETOOLS_DURATIONS_FILE` | Override `~/.config/updatetools/durations`, where each step's last run time is kept for the dashboard's time estimate. |
 | `STALL_TIMEOUT` | Seconds a step may show no progress before it is stopped (default `300`, `0` turns it off). A Homebrew download that is still arriving counts as progress, though Homebrew prints nothing while it downloads. |
+| `NET_TIMEOUT` | Seconds without a network connection before the run stops (default `30`, `0` turns the network watch off). |
+| `STOP_GRACE` | Seconds a tool that is asked to stop gets to exit before it is killed (default `30`). |
+| `DIAG_DIR` | Where a run that stopped or failed keeps its log and report (default `~/Library/Logs/updatetools`). |
+| `DIAG_KEEP` | How many of those runs are kept (default `20`). |
 | `NOTIFY_MODE=never` | `--no-notify` |
 | `NOTIFY_MODE=on_error` | `--notify-on-error` |
 | `UPDATETOOLS_CLOSE="a b"` | Force-close these cask apps to upgrade them now (space/comma list of tokens). |
@@ -320,6 +324,45 @@ A deferred DMG update temporarily leaves its verified staged app and one-shot
 helper on disk; both are removed after the natural app exit and atomic swap.
 Pass `--debug` to keep the log and report.
 
+
+## When a run is interrupted
+
+A run never ends by leaving its tools running. Whatever stops it, every tool
+still running is sent `SIGTERM`, the polite request to stop, and gets
+`STOP_GRACE` seconds to exit on its own (Homebrew cleans up an unfinished
+install when it gets it). Only a tool still running after that is killed, and
+the message names it, with `brew doctor` as the check for Homebrew. No step
+starts after a stop, so the next run (or the next step) never collides with a
+tool that is still finishing.
+
+- **Network lost.** While the steps run, the connection is checked every few
+  seconds (a default route, then Apple's connectivity check or GitHub). The
+  dashboard warns as soon as it is gone; after `NET_TIMEOUT` seconds in a row
+  the run stops. A shorter drop, such as Wi-Fi switching networks, changes
+  nothing. With no connection at all when the steps are about to start, none
+  starts. `--plain` exits with code `75` so a scheduled run can tell this from a
+  failure.
+- **Ctrl+C, `kill`, or the terminal closed.** The same stop. The terminal
+  prints what was stopped, what never ran and where the diagnostics are; a
+  closed terminal gets a desktop notification instead. Press Ctrl+C a second
+  time to kill at once instead of waiting. Exit codes: `130` (Ctrl+C), `143`
+  (`kill`), `129` (closed terminal). Once the run has finished, Ctrl+C just
+  closes it.
+- **`kill -9` or a crash.** Nothing can catch that, so the dashboard's local
+  server, which outlives the run, stops what the run left running and says so in
+  the terminal and on the page. The next `updatetools` run finds the run that
+  did not finish, saves its log and warns in the terminal and on the dashboard.
+
+After a stop, the dashboard's **Continue** runs the stopped steps and the ones
+that never ran.
+
+A run that stops or has a failed step keeps `run.log` (every step's output
+plus timestamped events: steps starting and ending with their exit codes,
+network drops, stall and stop actions, signals) and `diagnostics.txt` (the
+outcome, each step's result, the network and Homebrew lock state, free disk
+space and the last output of each failed step) in a folder of
+`~/Library/Logs/updatetools`. The path is shown on the dashboard and in the
+terminal. A clean run still leaves nothing behind.
 
 ## Notes & gotchas
 

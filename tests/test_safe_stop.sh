@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Stopping an update must not leave a tool half-done or still running. A tool
-# told to stop gets SIGTERM and time to roll back (brew and npm undo a partial
-# install on TERM); only one that has not exited when the grace is over is
-# killed. Nothing it started may outlive the stop: the next step, or the next
+# told to stop gets SIGTERM and time to finish stopping (Homebrew cleans up an
+# unfinished install on TERM); only one that has not exited when the grace is
+# over is killed. Nothing it started may outlive the stop: the next step, or the next
 # run, would collide with it on Homebrew's lock and leave mixed versions.
 set -u
 

@@ -69,6 +69,15 @@ DEBUG="${DEBUG:-0}"
 # Watchdog: kill a step that emits no output for this many seconds. 0 disables.
 STALL_TIMEOUT="${STALL_TIMEOUT:-300}"
 PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-300}"
+# Stop the run after this many seconds without a network connection. 0 disables.
+NET_TIMEOUT="${NET_TIMEOUT:-30}"
+NET_PROBE_EVERY="${NET_PROBE_EVERY:-5}"
+NET_PROBE_URLS="${NET_PROBE_URLS:-http://captive.apple.com/hotspot-detect.html https://github.com}"
+# A tool told to stop gets this long to exit on its own before it is killed.
+STOP_GRACE="${STOP_GRACE:-30}"
+# A run that stops or fails keeps its log and a report here (newest DIAG_KEEP).
+DIAG_DIR="${DIAG_DIR:-$HOME/Library/Logs/updatetools}"
+DIAG_KEEP="${DIAG_KEEP:-20}"
 # Comma/space lists of step keys for this run only (do not rewrite the saved set
 # unless the dashboard Start control confirms a selection).
 ONLY_STEPS=""
@@ -3199,6 +3208,14 @@ try {
   }
   .fail-card .hint{margin:.5rem 0 0; color:var(--ink-2); font:400 14px/1.5 var(--sans)}
   .attention .note-p{margin-top:.25rem}
+  /* Why the run stopped, or may stop: right under the verdict. */
+  .alert{margin:1rem 0 0; padding:14px 16px 14px 20px; border-radius:var(--r-md); border:1px solid var(--bad-bd); background:var(--bad-wash)}
+  .alert[data-kind="warn"]{border-color:color-mix(in oklab,var(--warn) 35%,transparent); background:var(--warn-wash)}
+  .alert b{display:block; color:var(--bad-ink); font:500 15px/21px var(--display); letter-spacing:.11px}
+  .alert[data-kind="warn"] b{color:var(--warn-ink)}
+  .alert p{margin:.35rem 0 0; color:var(--ink-2); font:400 14px/1.5 var(--sans); overflow-wrap:anywhere}
+  .alert code{font:400 12.5px/1.6 var(--mono); overflow-wrap:anywhere}
+  .alert .btn{margin-left:.5rem}
   .btn:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
   .record{
     width:100%; display:flex; align-items:center; gap:20px;
@@ -3530,6 +3547,7 @@ try {
         <h2 class="headline" id="headline">updatetools</h2>
       </div>
       <p class="phase" id="phase" role="status" aria-live="polite">Starting…</p>
+      <div class="alert" id="alert" role="alert" hidden></div>
       <div class="chooser" id="chooser"><div class="chooser-in">
         <div class="actions">
           <button type="button" class="cta primary" id="start-run" aria-keyshortcuts="Meta+Enter">
@@ -4033,6 +4051,11 @@ WEB_HTML_HEAD
       sub = [`Finished in ${fmt(st.elapsed || 0)}`, restarted ? `${restarted} restarted` : '',
         staged ? `${staged} waiting for you to quit` : '', counts.skip ? `${counts.skip} skipped` : ''].filter(Boolean).join(' · ');
       document.title = counts.fail ? `updatetools · ${counts.fail} failed` : 'updatetools · done';
+      if (st.halt) {
+        head = haltNotice(st).title;
+        sub = [`Stopped after ${fmt(st.elapsed || 0)}`, counts.done ? `${counts.done} done before that` : ''].filter(Boolean).join(' · ');
+        document.title = 'updatetools · stopped';
+      }
       if (st.notice) { sub = escapeHtml(st.notice); p.classList.add('lost'); }
     }
     if (h.textContent !== head) h.textContent = head;
@@ -4049,9 +4072,9 @@ WEB_HTML_HEAD
       return p.done ? 'Up to date' : 'Checking…';
     }
     if (s.s === 'run') return `<span class="took">${fmt(Math.max(0, st.elapsed - (s.b ?? st.elapsed)))}</span>`;
-    if (s.s === 'fail') return `<span class="chip red">Failed${s.t != null ? ` · ${dur(s.t)}` : ''}</span>`;
+    if (s.s === 'fail') return `<span class="chip red">${s.why === 'stopped' ? 'Stopped' : 'Failed'}${s.t != null ? ` · ${dur(s.t)}` : ''}</span>`;
     if (s.s === 'staged') return `<span class="chip amber">Waits${s.t != null ? ` · ${dur(s.t)}` : ''}</span>`;
-    if (s.s === 'skip') return s.why === 'guard' ? 'not found' : 'skipped';
+    if (s.s === 'skip') return s.why === 'guard' ? 'not found' : s.why === 'halted' ? 'not run' : 'skipped';
     if (s.s === 'done') return dur(s.t);
     if (s.s === 'pending' && s.est != null && st.phase !== 'error') return `~${dur(s.est)}`;
     return '';
@@ -4196,19 +4219,53 @@ WEB_HTML_HEAD
   }
 
   /* ── the result: failures first, then what waits, then what changed ─────── */
-  // The one action after a run: retry what failed, or ask for the password
-  // again when it was rejected before anything ran.
+  // The one action after a run: retry what failed, continue a run that was
+  // stopped, or ask for the password again when it was rejected before
+  // anything ran.
   function retryAction(st, counts) {
     if (st.phase === 'error') return 'Try again';
+    if (st.phase === 'done' && st.halt && retryKeys(st).length) return 'Continue';
     if (st.phase === 'done' && counts.fail > 0) return 'Retry failed';
     return '';
+  }
+  // What that action runs. After a stop: the stopped steps and the ones that
+  // never ran (the report is rebuilt anyway).
+  function retryKeys(st) {
+    const steps = st.steps || [];
+    if (st.phase === 'error') return steps.filter((s) => s.on !== false && s.key !== 'report').map((s) => s.key);
+    return steps.filter((s) => s.s === 'fail' || (s.s === 'skip' && s.why === 'halted' && s.key !== 'report')).map((s) => s.key);
+  }
+  // Why the run stopped, or may stop. The server words the detail; the page
+  // names the reason.
+  function haltNotice(st) {
+    const h = st.halt;
+    if (h) {
+      const title = h.why === 'network' ? 'Stopped: the network connection was lost'
+        : h.why === 'signal' ? 'Stopped from the terminal'
+        : h.why === 'killed' ? 'The run was killed' : 'Stopped';
+      return { kind: 'bad', title, detail: h.msg || '', diag: h.diag || '' };
+    }
+    if (st.net && st.phase === 'run') {
+      return { kind: 'warn', title: 'No network connection',
+        detail: `For ${st.net.down} s (${st.net.why}). The run stops safely at ${st.net.limit} s unless it comes back.`, diag: '' };
+    }
+    if (st.prev) return { kind: 'warn', title: 'The last run did not finish', detail: st.prev, diag: '' };
+    return null;
+  }
+  function paintAlert(st) {
+    const box = $('alert'), n = haltNotice(st);
+    if (!n) { box.hidden = true; setHtml(box, ''); return; }
+    box.dataset.kind = n.kind;
+    setHtml(box, `<b>${escapeHtml(n.title)}</b><p>${escapeHtml(n.detail)}</p>`
+      + (n.diag ? `<p>Diagnostics: <code>${escapeHtml(n.diag)}</code><button type="button" class="btn" data-copy="${escapeHtml(n.diag)}">Copy path</button></p>` : ''));
+    box.hidden = false;
   }
   // A red cross means "this run achieved nothing". One failed source among
   // many that worked is a warning, not a failure of the whole run.
   function paintVerdict(st, counts) {
     const v = $('verdict'), mark = $('r-mark');
     let kind = '';
-    if (st.phase === 'error') kind = 'bad';
+    if (st.phase === 'error' || (st.phase === 'done' && st.halt)) kind = 'bad';
     else if (st.phase === 'done' && counts.fail) kind = counts.done || counts.staged ? 'warn' : 'bad';
     else if (st.phase === 'done' && counts.staged && !counts.done) kind = 'wait';
     v.classList.toggle('bad', kind === 'bad');
@@ -4219,7 +4276,8 @@ WEB_HTML_HEAD
   }
   function renderAttention(st) {
     const box = $('attention');
-    const failed = (st.steps || []).filter((s) => s.s === 'fail');
+    // A step the run stopped did not fail on its own: the banner says why.
+    const failed = (st.steps || []).filter((s) => s.s === 'fail' && s.why !== 'stopped');
     if (st.phase !== 'done' || !failed.length) { box.hidden = true; setHtml(box, ''); return; }
     // One upstream problem often fails several steps; say it once. Steps group
     // on their error line; the shown text keeps only lines they all share.
@@ -4244,7 +4302,8 @@ WEB_HTML_HEAD
           ${why ? `<p class="msg">${escapeHtml(why)}</p>` : failReasons ? '<p class="hint">The output has no error line. The last lines of its output usually say what went wrong.</p>' : '<p class="hint">Reading the output…</p>'}
         </div>`;
     }).join('');
-    const html = cards + `<p class="note-p">${failed.length === 1 ? 'Retry failed runs only this source again.' : 'Retry failed runs only these sources again.'}</p>`;
+    const diag = st.diag ? `<p class="note-p">The run log and a report are saved in <code>${escapeHtml(st.diag)}</code> <button type="button" class="btn" data-copy="${escapeHtml(st.diag)}">Copy path</button></p>` : '';
+    const html = cards + `<p class="note-p">${failed.length === 1 ? 'Retry failed runs only this source again.' : 'Retry failed runs only these sources again.'}</p>` + diag;
     setHtml(box, html);
     box.hidden = false;
   }
@@ -4391,6 +4450,7 @@ WEB_HTML_HEAD
     const counts = selectedCounts(shown, st.phase, st.phase === 'choose' ? chooseLocal : null);
     paintHeader(st, counts);
     paintVerdict(st, counts);
+    paintAlert(st);
     // Password entry is not part of the run. The clock stays at 00:00 until
     // the tools themselves start, then counts only their time.
     $('clock').textContent = st.phase === 'choose' || st.phase === 'error' || st.prompt ? '00:00' : fmt(st.elapsed || 0);
@@ -4417,13 +4477,15 @@ WEB_HTML_HEAD
     } catch { /* server gone: keep what we have */ }
     return logText;
   }
+  // The run's own timestamped events (step started, network down, …) sit
+  // between the steps' output; they are not part of any step's.
   function sliceFor(label) {
     const parts = logText.split(/^######## (.+?) ########$/m);
     let last = '';
     for (let i = 1; i < parts.length; i += 2) {
       if (parts[i].trim() === label.trim()) last = parts[i + 1].trim();
     }
-    return last;
+    return last.split('\n').filter((l) => !/^\[\d\d:\d\d:\d\d\] updatetools: /.test(l)).join('\n').trim();
   }
   // The last error line of a step's own log section, plus the advice brew and
   // friends print right after it. Nothing is invented: no error line, no reason.
@@ -4956,9 +5018,7 @@ WEB_HTML_HEAD
   async function retryFailed() {
     if (retrySent || !latestState || (latestPhase !== 'done' && latestPhase !== 'error')) return;
     // After a rejected password the same selection runs; the server asks again.
-    const keys = latestPhase === 'error'
-      ? (latestState.steps || []).filter((s) => s.on !== false && s.key !== 'report').map((s) => s.key)
-      : (latestState.steps || []).filter((s) => s.s === 'fail').map((s) => s.key);
+    const keys = retryKeys(latestState);
     if (!keys.length) return;
     retrySent = true;
     $('retry-run').disabled = true;
@@ -5076,6 +5136,7 @@ WEB_HTML_HEAD
     }
   };
   $('result').addEventListener('click', onAction);
+  $('alert').addEventListener('click', onAction);
   $('files').addEventListener('click', onAction);
   $('open-ledger').addEventListener('click', openLedger);
   $('ledger-back').addEventListener('click', closeLedger);
@@ -5478,6 +5539,7 @@ ut_log_tail() {
     | awk '
         /^[ \t]*$/ { next }
         /^#{2,}/ { next }
+        /^\[[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\] updatetools: / { next }
         /^[#O=. \t-]{4,}$/ { next }
         { line = $0 }
         END { print line }
@@ -5565,6 +5627,15 @@ ut_web_state() {
       [ -n "${UT_LAYOUT_PASS:-}" ] && printf ',"layoutPass":"%s"' "$(ut_json_escape "$UT_LAYOUT_PASS")"
     fi
     [ -n "${UT_WEB_NOTICE:-}" ] && printf ',"notice":"%s"' "$(ut_json_escape "$UT_WEB_NOTICE")"
+    if [ -n "${UT_HALT:-}" ]; then
+      printf ',"halt":{"why":"%s","msg":"%s","diag":"%s"}' "$UT_HALT" \
+        "$(ut_json_escape "${UT_HALT_MSG:-$UT_HALT_CAUSE}")" "$(ut_json_escape "${UT_DIAG:-}")"
+    elif [ -n "${UT_NET_DOWN_SINCE:-}" ]; then
+      printf ',"net":{"down":%d,"limit":%d,"why":"%s"}' "$(( SECONDS - UT_NET_DOWN_SINCE ))" \
+        "$NET_TIMEOUT" "$(ut_json_escape "$UT_NET_WHY")"
+    fi
+    [ -n "${UT_DIAG:-}" ] && printf ',"diag":"%s"' "$(ut_json_escape "$UT_DIAG")"
+    [ -n "${UT_PREV_WARN:-}" ] && printf ',"prev":"%s"' "$(ut_json_escape "$UT_PREV_WARN")"
     [ -n "${UT_PLAN_JSON:-}" ] && printf ',"plan":%s' "$UT_PLAN_JSON"
     if [ "$phase" = "run" ]; then
       local dls
@@ -5636,6 +5707,8 @@ ut_web_ask() {
     if [ "$waited" -gt "$limit" ]; then UT_PROMPT=""; ut_web_state run; return 1; fi
     # the tab was closed / server gone: nobody can answer any more
     kill -0 "$WEB_PID" 2>/dev/null || { UT_PROMPT=""; return 1; }
+    # the run is stopping (network lost, Ctrl+C): the password is moot
+    if [ -n "${UT_HALT:-}" ]; then UT_PROMPT=""; ut_web_state run; return 1; fi
     if [ $((waited % 2)) -eq 0 ]; then
       ut_read_input_source
       if [ "$UT_LAYOUT_NOW" != "$seen" ]; then
@@ -5652,16 +5725,10 @@ ut_web_ask() {
   return 0
 }
 
-# ut_web_start — serve the page on a free port and open it. Returns 1 if we
-# can't (no python3), so the caller can fall back to plain output.
-ut_web_start() {
-  have python3 || return 1
-  WEB_DIR=$(mktemp -d "${TMPDIR:-/tmp}/updatetools-web.XXXXXX") || return 1
-  ut_web_page > "$WEB_DIR/index.html" || return 1
-  ut_web_state "choose"
-
-  # http.server with a no-store header, so a poll never reads a cached snapshot.
-  cat > "$WEB_DIR/serve.py" <<'SERVE_EOF'
+# ut_web_server_py — the local dashboard server (Python), on stdout.
+# http.server with a no-store header, so a poll never reads a cached snapshot.
+ut_web_server_py() {
+  cat <<'SERVE_EOF'
 # Local dashboard server.
 #
 # Access control, in layers:
@@ -5673,9 +5740,13 @@ ut_web_start() {
 #      site resolves a name to 127.0.0.1 and talks to us from the victim's browser
 #   4. the password goes over this loopback socket only, and is written straight
 #      to the askpass reply file; it is never stored or echoed anywhere
-import http.server, socketserver, sys, os, threading, time, json, http.cookies
+import http.server, socketserver, sys, os, threading, time, json, http.cookies, signal, subprocess, shutil
 
 root, token_file, reply_file, idle_timeout = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
+# The terminal the run was started from, and how long a stopped tool may take.
+tty_path = sys.argv[5] if len(sys.argv) > 5 else ''
+grace = float(sys.argv[6]) if len(sys.argv) > 6 else 30.0
+parent = os.getppid()
 # The token arrives in a 0600 file, not on the command line — argv is visible to
 # every user on the machine via ps, which would defeat the point of having one.
 with open(token_file) as f:
@@ -5786,6 +5857,89 @@ class H(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, *a): pass
 
+# The run is this server's parent. If it dies without cleaning up (kill -9, a
+# crash), nothing else will stop the updates it was running, its sudo keeper,
+# or tell anyone: the server does, in the terminal and on the page.
+def tell(msg):
+    if not tty_path:
+        return
+    try:
+        with open(tty_path, 'a') as t:
+            t.write(msg + '\n')
+    except OSError:
+        pass
+
+def tree(pid):
+    out = [pid]
+    try:
+        kids = subprocess.run(['pgrep', '-P', str(pid)], capture_output=True, text=True).stdout.split()
+    except OSError:
+        kids = []
+    for k in kids:
+        out += tree(int(k))
+    return out
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+def orphaned():
+    path = os.path.join(root, 'state.json')
+    try:
+        with open(path) as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        st = {'steps': []}
+    running = [s.get('n', '?') for s in st.get('steps', []) if s.get('s') == 'run']
+    names = ', '.join(running) or 'no update'
+    tell(f'\nupdatetools: the run (PID {parent}) was killed while {names} ran. Stopping what it left running...')
+    try:
+        with open(os.path.join(root, 'pids')) as f:
+            roots = [int(x) for x in f.read().split()]
+    except (OSError, ValueError):
+        roots = []
+    pids = [p for r in roots for p in tree(r)]
+    for p in pids:
+        try:
+            os.kill(p, signal.SIGTERM)
+        except OSError:
+            pass
+    end = time.time() + grace
+    while time.time() < end and any(alive(p) for p in pids):
+        time.sleep(0.2)
+    left = [p for p in pids if alive(p)]
+    for p in left:
+        try:
+            os.kill(p, signal.SIGKILL)
+        except OSError:
+            pass
+    if not running:
+        outcome = 'Nothing was updating.'
+    elif left:
+        outcome = f'{names} did not exit within {int(grace)} s and was forced to quit; check it before the next update (for Homebrew: brew doctor).'
+    else:
+        outcome = f'{names} was asked to stop and exited cleanly.'
+    msg = f'The run was killed (kill -9 or a crash) while {names} ran. {outcome} Run updatetools again to finish; it saves this run\'s log.'
+    for s in st.get('steps', []):
+        if s.get('s') == 'run':
+            s['s'], s['why'] = 'fail', 'stopped'
+        elif s.get('s') == 'pending':
+            s['s'], s['why'] = 'skip', 'halted'
+    st.pop('prompt', None)
+    st.pop('net', None)
+    st['phase'] = 'done'
+    st['halt'] = {'why': 'killed', 'msg': msg}
+    tmp = os.path.join(root, '.state.tmp')
+    with open(tmp, 'w') as f:
+        json.dump(st, f)
+    os.replace(tmp, path)
+    tell('updatetools: ' + msg)
+
 class Server(socketserver.ThreadingTCPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -5797,11 +5951,31 @@ with Server(('127.0.0.1', 0), H) as srv:
     def watch():
         while True:
             time.sleep(1)
+            if not state.get('orphan') and os.getppid() != parent:
+                state['orphan'] = True
+                try:
+                    orphaned()
+                except Exception as e:
+                    tell(f'updatetools: could not stop what the killed run left running: {e}')
             if state['quit'] or time.time() - state['last'] > idle_timeout:
                 srv.shutdown(); return
     threading.Thread(target=watch, daemon=True).start()
     srv.serve_forever()
+# Nobody else is left to remove the served dir of a killed run.
+if state.get('orphan'):
+    shutil.rmtree(root, ignore_errors=True)
 SERVE_EOF
+}
+
+# ut_web_start — serve the page on a free port and open it. Returns 1 if we
+# can't (no python3), so the caller can fall back to plain output.
+ut_web_start() {
+  have python3 || return 1
+  WEB_DIR=$(mktemp -d "${TMPDIR:-/tmp}/updatetools-web.XXXXXX") || return 1
+  ut_web_page > "$WEB_DIR/index.html" || return 1
+  ut_web_state "choose"
+
+  ut_web_server_py > "$WEB_DIR/serve.py"
 
   # 128-bit token from the kernel's CSPRNG; the page trades it for a cookie.
   # via python (already required here): `tr -dc … < /dev/urandom | head -c 32`
@@ -5815,7 +5989,9 @@ SERVE_EOF
   # about once a minute, and a shorter limit would end the run's dashboard
   # while it sits in a background tab. A closed tab still ends the server at
   # once after the run (the page sends /quit on pagehide).
-  python3 "$WEB_DIR/serve.py" "$WEB_DIR" "$tokfile" "$PROMPT_REP" "${WEB_IDLE:-75}" \
+  local term
+  term="$(tty 2>/dev/null)" || term=""
+  python3 "$WEB_DIR/serve.py" "$WEB_DIR" "$tokfile" "$PROMPT_REP" "${WEB_IDLE:-75}" "$term" "${STOP_GRACE:-30}" \
     > "$WEB_DIR/port" 2>/dev/null &
   WEB_PID=$!
   local tries=0 port=""
@@ -6217,6 +6393,11 @@ STATUS=(); STEP_T0=(); STEP_SEC=(); STEP_SLUG=(); STEP_IMG=(); STEP_WHY=()
 CUR_STEP=0; CUR_PID=""
 SUDO_KEEPER=""; WRAP_DIR=""; PROMPT_REQ=""; PROMPT_REP=""; LOCKDIR=""
 UT_WEB_REPORT=""; UT_WEB_UPDATES=""; SUDO_PW=""; UT_PROMPT=""; UT_CLOCK_HELD=""
+UT_HALT=""; UT_HALT_CAUSE=""; UT_HALT_MSG=""; UT_DIAG=""; UT_SIGNAL=""; UT_STOP_FORCE=""
+UT_NET_ON=""; UT_NET_DOWN_SINCE=""; UT_NET_WHY=""; UT_NET_PROBE_PID=""; UT_NET_LAST=""
+UT_NET_FILE="${TMPDIR:-/tmp}/updatetools-net-$$"; UT_PREV_WARN=""; STEP_RC=(); STEP_FORCED=(); STEP_PID=()
+UT_RUN_DONE=""
+LOCK_BASE="${TMPDIR:-/tmp}/updatetools.lock"
 UT_WEB_DATA="${TMPDIR:-/tmp}/updatetools-updates-$$.txt"
 export UT_WEB_DATA
 
@@ -6236,6 +6417,8 @@ CLEANED=""
 cleanup() {
   [ -n "$CLEANED" ] && return; CLEANED=1
   [ -n "$SUDO_KEEPER" ] && kill "$SUDO_KEEPER" 2>/dev/null
+  [ -n "${UT_NET_PROBE_PID:-}" ] && kill_tree "$UT_NET_PROBE_PID" 2>/dev/null
+  rm -f "$UT_NET_FILE" 2>/dev/null
   [ -n "${UT_PLAN_PID:-}" ] && kill_tree "$UT_PLAN_PID" 2>/dev/null
   [ -n "${UT_ICON_PID:-}" ] && kill "$UT_ICON_PID" 2>/dev/null
   [ -n "$WRAP_DIR" ] && rm -rf "$WRAP_DIR" 2>/dev/null
@@ -6250,12 +6433,13 @@ cleanup() {
   [ "${DEBUG:-0}" = "1" ] || rm -f "$LOG" 2>/dev/null
   ut_web_stop
 }
-trap 'cleanup; echo; echo "Interrupted. Full log: '"$LOG"'"; exit 130' INT TERM
 trap 'cleanup' EXIT
-# Closing the terminal sends SIGHUP: end the run and take the current step's
-# process tree with it — brew ignores HUP (we set that), so it would otherwise be
-# left orphaned, parked on a password prompt nobody can answer.
-trap '[ -n "${CUR_PID:-}" ] && kill_tree "$CUR_PID"; for _ut_p in ${CUR_PIDS:-}; do kill_tree "$_ut_p"; done; cleanup; exit 129' HUP
+# The steps run as background jobs, which ignore SIGINT, and ignore HUP (we set
+# that): Ctrl+C or a closed terminal would leave them running, orphaned. The
+# handler has the step loop stop them safely before the run ends.
+trap 'ut_on_signal INT' INT
+trap 'ut_on_signal TERM' TERM
+trap 'ut_on_signal HUP' HUP
 
 # Prime sudo before the run so a step doesn't stall on a hidden prompt.
 #
@@ -6407,34 +6591,45 @@ ut_step_progress() {
   printf '%s:%s\n' "${size:-0}" "$dl"
 }
 
-# Wait on one background step with the stall (+ optional askpass) watchdog.
-# Sets UT_WAIT_RC and UT_WAIT_STALLED.
+# Wait on one background step with the stall (+ optional askpass) watchdog and
+# the network watch. Sets UT_WAIT_RC, UT_WAIT_STALLED, UT_WAIT_HALTED (the run
+# was halted, the step stopped) and UT_WAIT_FORCED (it had to be killed).
 ut_watch_pid() {
   local pid="$1" steplog="$2"
-  local last_size last_change size stalled=0 prompt
+  local last_size last_change size stalled=0 halted=0 forced=0 prompt
   UT_WAIT_RC=0
   UT_WAIT_STALLED=0
   last_size=$(ut_step_progress "$steplog")
   last_change=$SECONDS
   CUR_PID=$pid
   while kill -0 "$pid" 2>/dev/null; do
+    ut_net_tick
+    if [ -n "${UT_HALT:-}" ]; then
+      ut_stop_tree "$pid" || forced=1
+      echo "######## stopped: ${UT_HALT_CAUSE} ########" >> "$steplog"
+      halted=1
+      break
+    fi
     if [ -n "${PROMPT_REQ:-}" ] && [ -f "$PROMPT_REQ" ]; then
       prompt=$(cat "$PROMPT_REQ"); rm -f "$PROMPT_REQ"
       if ut_web_ask "${prompt:-Password:}"; then
         last_change=$SECONDS
-      else
-        kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+      elif [ -z "${UT_HALT:-}" ]; then
+        ut_debug "password: none entered within ${PROMPT_TIMEOUT}s; stopping the step (PID $pid)"
+        ut_stop_tree "$pid"
         echo "######## no password entered within ${PROMPT_TIMEOUT}s — step aborted ########" >> "$steplog"
         stalled=1
         break
       fi
+      continue
     fi
     if [ "${STALL_TIMEOUT:-0}" -gt 0 ] 2>/dev/null; then
       size=$(ut_step_progress "$steplog")
       if [ "$size" != "$last_size" ]; then
         last_size=$size; last_change=$SECONDS
       elif [ $(( SECONDS - last_change )) -ge "$STALL_TIMEOUT" ]; then
-        kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+        ut_debug "stall: no output or download for ${STALL_TIMEOUT}s; stopping the step (PID $pid)"
+        ut_stop_tree "$pid"
         echo "######## stalled ${STALL_TIMEOUT}s with no output — killed ########" >> "$steplog"
         stalled=1
         break
@@ -6447,6 +6642,8 @@ ut_watch_pid() {
   wait "$pid" 2>/dev/null
   UT_WAIT_RC=$?
   UT_WAIT_STALLED=$stalled
+  UT_WAIT_HALTED=$halted
+  UT_WAIT_FORCED=$forced
 }
 
 # Start step $1 in the background; log goes to UT_STEP_LOG_DIR/$1.log.
@@ -6466,15 +6663,26 @@ ut_spawn_step() {
   } >>"$steplog" 2>&1 </dev/null &
   STEP_PID[i]=$!
   CUR_PIDS="${CUR_PIDS:+$CUR_PIDS }${STEP_PID[i]}"
+  ut_debug "step ${entry%%¦*}: started (PID ${STEP_PID[i]})"
+  ut_note_running
 }
 
+# ut_finish_step I RC [STALLED] [HALTED] [FORCED] — HALTED: the run was halted
+# and the step stopped; FORCED: it did not exit when asked and was killed.
 ut_finish_step() {
-  local i="$1" rc="$2" stalled="${3:-0}"
+  local i="$1" rc="$2" stalled="${3:-0}" halted="${4:-0}" forced="${5:-0}"
   local steplog="${UT_STEP_LOG_DIR}/$i.log"
   ut_absorb_step_log "$steplog"
   STEP_SEC[i]=$(( SECONDS - ${STEP_T0[i]:-$SECONDS} ))
   STATUS[i]="$(ut_status_from_rc "$rc" "$stalled")"
+  if [ "$halted" = "1" ]; then
+    STATUS[i]="fail"; STEP_WHY[i]="stopped"
+  fi
+  [ "$forced" = "1" ] && STEP_FORCED[i]=1
+  STEP_RC[i]=$rc
   STEP_PID[i]=""
+  ut_debug "step ${STEPS[i]%%¦*}: ${STATUS[i]}${STEP_WHY[i]:+ (${STEP_WHY[i]})}, exit $rc after ${STEP_SEC[i]}s"
+  ut_note_running
 }
 
 # Skip/guard check for step i. Returns 0 if the step should run.
@@ -6482,6 +6690,10 @@ ut_step_should_run() {
   local i="$1"
   if [ "${STEP_ON[i]}" != "1" ]; then
     STATUS[i]="skip"; STEP_WHY[i]="off"
+    return 1
+  fi
+  if [ -n "${UT_HALT:-}" ]; then
+    STATUS[i]="skip"; STEP_WHY[i]="halted"
     return 1
   fi
   local entry="${STEPS[i]}"
@@ -6507,7 +6719,7 @@ ut_run_step_serial() {
   steplog="${UT_STEP_LOG_DIR}/$i.log"
   [ -n "${WEB_DIR:-}" ] && ut_web_state run
   ut_watch_pid "${STEP_PID[i]}" "$steplog"
-  ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED"
+  ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED" "$UT_WAIT_HALTED" "$UT_WAIT_FORCED"
   [ -n "${WEB_DIR:-}" ] && ut_web_state run
 }
 
@@ -6541,6 +6753,11 @@ ut_run_wave() {
 
   while true; do
     any=0
+    ut_net_tick
+    if [ -n "${UT_HALT:-}" ]; then
+      ut_wave_stop "######## stopped: ${UT_HALT_CAUSE} ########" 1 "${wave_idx[@]}"
+      return 0
+    fi
     # One askpass at a time for the whole wave.
     if [ -n "${PROMPT_REQ:-}" ] && [ -f "$PROMPT_REQ" ]; then
       local prompt
@@ -6549,20 +6766,12 @@ ut_run_wave() {
         for i in "${wave_idx[@]}"; do
           [ -n "${STEP_PID[i]:-}" ] && w_last_change[i]=$SECONDS
         done
-      else
-        for i in "${wave_idx[@]}"; do
-          pid="${STEP_PID[i]:-}"
-          [ -n "$pid" ] || continue
-          steplog="${UT_STEP_LOG_DIR}/$i.log"
-          kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
-          echo "######## no password entered within ${PROMPT_TIMEOUT}s — step aborted ########" >> "$steplog"
-          wait "$pid" 2>/dev/null
-          ut_finish_step "$i" 1 1
-        done
-        CUR_PIDS=""
-        [ -n "${WEB_DIR:-}" ] && ut_web_state run
+      elif [ -z "${UT_HALT:-}" ]; then
+        ut_debug "password: none entered within ${PROMPT_TIMEOUT}s; stopping the wave"
+        ut_wave_stop "######## no password entered within ${PROMPT_TIMEOUT}s — step aborted ########" 0 "${wave_idx[@]}"
         return 0
       fi
+      continue
     fi
 
     for i in "${wave_idx[@]}"; do
@@ -6576,7 +6785,8 @@ ut_run_wave() {
           if [ "$size" != "${w_last_size[i]}" ]; then
             w_last_size[i]=$size; w_last_change[i]=$SECONDS
           elif [ $(( SECONDS - ${w_last_change[i]} )) -ge "$STALL_TIMEOUT" ]; then
-            kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+            ut_debug "stall: no output or download for ${STALL_TIMEOUT}s; stopping ${STEPS[i]%%¦*} (PID $pid)"
+            ut_stop_tree "$pid"
             echo "######## stalled ${STALL_TIMEOUT}s with no output — killed ########" >> "$steplog"
             wait "$pid" 2>/dev/null
             ut_finish_step "$i" 1 1
@@ -6602,12 +6812,34 @@ ut_run_wave() {
   CUR_PIDS=""
 }
 
+# ut_wave_stop BANNER HALTED I... — stop every wave step still running, all
+# at once, and finish each with BANNER in its log.
+ut_wave_stop() {
+  local banner="$1" halted="$2" i pid running=""
+  shift 2
+  for i in "$@"; do
+    [ -n "${STEP_PID[i]:-}" ] && running="$running ${STEP_PID[i]}"
+  done
+  # shellcheck disable=SC2086 # one pid per word
+  ut_stop_tree $running
+  ut_mark_forced "$@"
+  for i in "$@"; do
+    pid="${STEP_PID[i]:-}"
+    [ -n "$pid" ] || continue
+    echo "$banner" >> "${UT_STEP_LOG_DIR}/$i.log"
+    wait "$pid" 2>/dev/null
+    ut_finish_step "$i" 1 "$([ "$halted" = "1" ] && echo 0 || echo 1)" "$halted" "${STEP_FORCED[i]:-0}"
+  done
+  CUR_PIDS=""
+  [ -n "${WEB_DIR:-}" ] && ut_web_state run
+}
+
 # Drive STEPS: Homebrew alone → independent CLI wave → Report last.
 ut_run_steps() {
   local i
   UT_STEP_LOG_DIR="${TMPDIR:-/tmp}/updatetools-steps-$$"
   mkdir -p "$UT_STEP_LOG_DIR"
-  STEP_PID=()
+  STEP_PID=(); STEP_RC=(); STEP_FORCED=()
   CUR_PIDS=""
 
   # Homebrew first and alone (never concurrent with the CLI wave).
@@ -6640,8 +6872,527 @@ ut_run_steps() {
     ut_run_step_serial "$i"
   done
 
+  ut_after_steps
   rm -rf "$UT_STEP_LOG_DIR" 2>/dev/null
   UT_STEP_LOG_DIR=""
+}
+
+# ===========================================================================
+# Interruptions: a lost network, Ctrl+C / kill / a closed terminal, a run that
+# was killed outright. Each ends the run the same way: the running tools are
+# stopped safely, nothing new starts, the dashboard and the terminal say why,
+# and the evidence is kept in DIAG_DIR.
+# ===========================================================================
+
+# ut_debug MESSAGE — a timestamped event in the run log. The page leaves these
+# lines out of each step's own output; the diagnostics keep the full timeline.
+ut_debug() {
+  [ -n "${LOG:-}" ] || return 0
+  printf '[%s] updatetools: %s\n' "$(date '+%H:%M:%S')" "$*" >> "$LOG" 2>/dev/null
+}
+
+ut_step_name() { local label="${STEPS[$1]%%¦*}"; printf '%s' "${label%% · *}"; }
+
+# ut_tree_pids PID — PID and every process under it, parents first.
+ut_tree_pids() {
+  local c
+  printf '%s\n' "$1"
+  for c in $(pgrep -P "$1" 2>/dev/null); do ut_tree_pids "$c"; done
+}
+
+ut_pids_alive() { # PID... -> the ones still running
+  [ "$#" -gt 0 ] || return 0
+  ps -o pid= -p "$(printf '%s,' "$@" | sed 's/,$//')" 2>/dev/null | tr -d ' '
+}
+
+ut_describe_pids() { # PID... -> "123 brew, 456 curl"
+  [ "$#" -gt 0 ] || return 0
+  ps -o pid= -o comm= -p "$(printf '%s,' "$@" | sed 's/,$//')" 2>/dev/null \
+    | awk '{ n = $2; sub(/.*\//, "", n); printf "%s%s %s", (i++ ? ", " : ""), $1, n }'
+}
+
+# ut_stop_tree PID... — stop running steps without leaving half-done work.
+# Every process of each tree gets SIGTERM at once: the step's shell must not
+# start its next command, and Homebrew cleans up an unfinished install on it.
+# They get STOP_GRACE seconds to exit; whatever still runs then
+# (or at once, after a second Ctrl+C) is killed. Root-owned processes, such as
+# a pkg installer under sudo, cannot be signalled and are waited for.
+# Sets UT_STOP_FORCED_ROOTS to the PIDs whose tree had to be killed; rc 1 then.
+ut_stop_tree() {
+  local root p uid t=0 grace="${STOP_GRACE:-30}" all="" alive k
+  local -a roots=() trees=()
+  UT_STOP_FORCED_ROOTS=""
+  [ "$#" -gt 0 ] || return 0
+  uid=$(id -u)
+  for root in "$@"; do
+    roots+=("$root")
+    trees+=(" $(ut_tree_pids "$root" | tr '\n' ' ')")
+    all="$all ${trees[${#trees[@]}-1]}"
+  done
+  # shellcheck disable=SC2086 # one pid per word
+  ut_debug "stop: SIGTERM to $(ut_describe_pids $all); up to ${grace}s to exit"
+  for p in $all; do
+    [ "$(ps -o uid= -p "$p" 2>/dev/null | tr -d ' ')" = "$uid" ] && kill -TERM "$p" 2>/dev/null
+  done
+  while :; do
+    # shellcheck disable=SC2086
+    alive=" $(ut_pids_alive $all | tr '\n' ' ')"
+    [ -n "${alive// /}" ] || break
+    [ "$t" -lt $(( grace * 5 )) ] || break
+    [ -z "${UT_STOP_FORCE:-}" ] || break
+    sleep 0.2; t=$((t + 1))
+  done
+  if [ -z "${alive// /}" ]; then
+    ut_debug "stop: everything exited after $(( t / 5 ))s"
+    return 0
+  fi
+  # shellcheck disable=SC2086
+  ut_debug "stop: still running $([ -n "${UT_STOP_FORCE:-}" ] && echo "at a second signal" || echo "after ${grace}s"), SIGKILL: $(ut_describe_pids $alive)"
+  for ((k=0;k<${#roots[@]};k++)); do
+    for p in $alive; do
+      case "${trees[k]} " in *" $p "*) UT_STOP_FORCED_ROOTS="$UT_STOP_FORCED_ROOTS ${roots[k]}"; break ;; esac
+    done
+  done
+  for p in $alive; do kill -KILL "$p" 2>/dev/null; done
+  sleep 0.2
+  # shellcheck disable=SC2086
+  alive="$(ut_pids_alive $alive | tr '\n' ' ')"
+  # shellcheck disable=SC2086
+  [ -z "${alive// /}" ] || ut_debug "stop: could not stop (root-owned or unkillable): $(ut_describe_pids $alive)"
+  return 1
+}
+
+# ut_mark_forced I... — the steps whose tree ut_stop_tree had to kill.
+ut_mark_forced() {
+  local i
+  for i in "$@"; do
+    case " $UT_STOP_FORCED_ROOTS " in *" ${STEP_PID[i]:-x} "*) STEP_FORCED[i]=1 ;; esac
+  done
+}
+
+# ut_net_probe — "up", or "down <why>". No default route means no network at
+# all; otherwise Apple's connectivity check (what macOS itself asks) or GitHub
+# has to answer within 5 s.
+ut_net_probe() {
+  local url err=""
+  if ! route -n get default >/dev/null 2>&1; then
+    echo "down no default route (Wi-Fi off, cable out or no network)"
+    return 0
+  fi
+  for url in $NET_PROBE_URLS; do
+    if err="$(curl -sS -o /dev/null -m 5 "$url" 2>&1)"; then
+      echo up
+      return 0
+    fi
+  done
+  echo "down ${err#curl: }"
+}
+
+# ut_net_note LINE — record a probe result; halt once the network has been
+# gone for NET_TIMEOUT seconds in a row.
+ut_net_note() {
+  case "$1" in
+    up)
+      if [ -n "${UT_NET_DOWN_SINCE:-}" ]; then
+        ut_debug "network back after $(( SECONDS - UT_NET_DOWN_SINCE ))s"
+        UT_NET_DOWN_SINCE=""; UT_NET_WHY=""
+      fi
+      ;;
+    down\ *)
+      UT_NET_WHY="${1#down }"
+      if [ -z "${UT_NET_DOWN_SINCE:-}" ]; then
+        UT_NET_DOWN_SINCE=$SECONDS
+        ut_debug "network down: $UT_NET_WHY"
+      fi
+      ;;
+    *) ut_debug "network: unreadable probe result '$1'" ;;
+  esac
+  if [ -n "${UT_NET_DOWN_SINCE:-}" ] && [ $(( SECONDS - UT_NET_DOWN_SINCE )) -ge "$NET_TIMEOUT" ]; then
+    ut_halt network "No network connection for $(( SECONDS - UT_NET_DOWN_SINCE )) s ($UT_NET_WHY)."
+  fi
+}
+
+# ut_net_gate — right before the first step: wait up to NET_TIMEOUT for a
+# connection, then keep watching it while the steps run. rc 1 when there is
+# none: the run is halted and no step starts.
+ut_net_gate() {
+  UT_NET_ON=""; UT_NET_DOWN_SINCE=""; UT_NET_WHY=""
+  [ "${NET_TIMEOUT:-0}" -gt 0 ] 2>/dev/null || return 0
+  local line
+  while :; do
+    line="$(ut_net_probe)"
+    ut_net_note "$line"
+    [ "$line" = "up" ] && break
+    [ -z "${UT_HALT:-}" ] || return 1
+    [ -n "${WEB_DIR:-}" ] && ut_web_state run
+    sleep "$NET_PROBE_EVERY"
+  done
+  UT_NET_ON=1
+  UT_NET_LAST=$SECONDS
+  return 0
+}
+
+# ut_net_tick — called from the step loops. The probe runs in the background,
+# so a slow answer never holds the loop (or the stall watchdog) up.
+ut_net_tick() {
+  [ -n "${UT_NET_ON:-}" ] || return 0
+  if [ -n "${UT_NET_PROBE_PID:-}" ]; then
+    if ! kill -0 "$UT_NET_PROBE_PID" 2>/dev/null; then
+      wait "$UT_NET_PROBE_PID" 2>/dev/null
+      UT_NET_PROBE_PID=""
+      ut_net_note "$(cat "$UT_NET_FILE" 2>/dev/null)"
+      return 0
+    fi
+  elif [ $(( SECONDS - ${UT_NET_LAST:-0} )) -ge "$NET_PROBE_EVERY" ]; then
+    UT_NET_LAST=$SECONDS
+    ut_net_probe > "$UT_NET_FILE" 2>/dev/null </dev/null &
+    UT_NET_PROBE_PID=$!
+  fi
+  ut_net_note_wait
+}
+
+# While a probe is out, an outage already seen still counts toward the limit.
+ut_net_note_wait() {
+  [ -n "${UT_NET_DOWN_SINCE:-}" ] || return 0
+  [ $(( SECONDS - UT_NET_DOWN_SINCE )) -ge "$NET_TIMEOUT" ] || return 0
+  ut_halt network "No network connection for $(( SECONDS - UT_NET_DOWN_SINCE )) s ($UT_NET_WHY)."
+}
+
+ut_net_stop() {
+  UT_NET_ON=""
+  if [ -n "${UT_NET_PROBE_PID:-}" ]; then
+    kill_tree "$UT_NET_PROBE_PID" 2>/dev/null
+    wait "$UT_NET_PROBE_PID" 2>/dev/null
+    UT_NET_PROBE_PID=""
+  fi
+}
+
+# ut_halt WHY CAUSE — stop the run: the step loops stop what runs, and no step
+# starts after this. WHY is network or signal.
+ut_halt() {
+  [ -z "${UT_HALT:-}" ] || return 0
+  UT_HALT="$1"; UT_HALT_CAUSE="$2"
+  # Offline, every icon fetch for the report would wait out its timeout.
+  [ "$1" = "network" ] && UT_ICON_OFFLINE=1
+  ut_debug "halt ($1): $2 Stopping what runs; nothing else starts."
+}
+
+# ut_halt_summary — the cause, then what became of each step, in one paragraph.
+ut_halt_summary() {
+  local i name stopped="" forced="" notrun="" changed=0
+  for ((i=0;i<TOTAL;i++)); do
+    name="$(ut_step_name "$i")"
+    case "${STATUS[i]}:${STEP_WHY[i]:-}" in
+      fail:stopped)
+        if [ -n "${STEP_FORCED[i]:-}" ]; then forced="${forced:+$forced, }$name"
+        else stopped="${stopped:+$stopped, }$name"; fi
+        changed=1
+        ;;
+      skip:halted) [ "${STEP_KEY[i]:-}" = "report" ] || notrun="${notrun:+$notrun, }$name" ;;
+      done:*|staged:*|fail:*) changed=1 ;;
+    esac
+  done
+  printf '%s' "$UT_HALT_CAUSE"
+  [ -n "$stopped" ] && printf ' %s was asked to stop and exited cleanly.' "$stopped"
+  if [ -n "$forced" ]; then
+    if [ -n "${UT_STOP_FORCE:-}" ]; then
+      printf ' %s was forced to quit by a second signal before it finished stopping.' "$forced"
+    else
+      printf ' %s did not exit within %s s and was forced to quit.' "$forced" "${STOP_GRACE:-30}"
+    fi
+    printf ' Check it before the next update (for Homebrew: brew doctor).'
+  fi
+  [ -n "$notrun" ] && printf ' Not run: %s.' "$notrun"
+  [ "$changed" = "0" ] && printf ' Nothing was changed.'
+  if [ "$UT_HALT" = "network" ]; then
+    printf ' Run updatetools again once you are back online.'
+  else
+    printf ' Run updatetools again to finish.'
+  fi
+}
+
+# ut_note_running — what runs now, for whoever outlives this process: the
+# dashboard server stops these if the run is killed (kill -9), and the next run
+# names them when it finds this run's lock.
+ut_note_running() {
+  local i pids="" labels=""
+  for ((i=0;i<TOTAL;i++)); do
+    [ -n "${STEP_PID[i]:-}" ] || continue
+    pids="$pids${STEP_PID[i]}"$'\n'
+    labels="$labels${STEPS[i]%%¦*}"$'\n'
+  done
+  [ -n "${SUDO_KEEPER:-}" ] && pids="$pids$SUDO_KEEPER"$'\n'
+  [ -n "${WEB_DIR:-}" ] && [ -d "$WEB_DIR" ] && printf '%s' "$pids" > "$WEB_DIR/pids"
+  [ -n "${LOCKDIR:-}" ] && [ -d "$LOCKDIR" ] && printf '%s' "$labels" > "$LOCKDIR/steps"
+  return 0
+}
+
+# ut_diag_dir — a new, empty directory under DIAG_DIR named for this moment.
+ut_diag_dir() {
+  local base n=1 dir
+  base="$DIAG_DIR/$(date '+%Y-%m-%d_%H-%M-%S')"
+  dir="$base"
+  while [ -e "$dir" ]; do n=$((n + 1)); dir="$base-$n"; done
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    echo "updatetools: cannot write diagnostics to $dir" >&2
+    return 1
+  fi
+  printf '%s\n' "$dir"
+}
+
+# ut_diag_prune — keep the newest DIAG_KEEP runs; diagnostics are not an archive.
+ut_diag_prune() {
+  local old
+  ls -1 "$DIAG_DIR" 2>/dev/null | sort -r | tail -n +"$(( ${DIAG_KEEP:-20} + 1 ))" | while IFS= read -r old; do
+    [ -n "$old" ] && rm -rf "${DIAG_DIR:?}/$old"
+  done
+}
+
+# ut_diag_save — keep what explains a run that stopped or failed: the run log
+# (every step's output and the timestamped events) and a report of the state
+# the Mac was left in. Sets UT_DIAG. A clean run leaves nothing behind.
+ut_diag_save() {
+  local dir
+  dir="$(ut_diag_dir)" || return 1
+  ut_diag_report > "$dir/diagnostics.txt" 2>&1
+  UT_DIAG="$dir"
+  ut_debug "diagnostics saved to $dir"
+  [ -f "${LOG:-}" ] && cp "$LOG" "$dir/run.log"
+  ut_diag_prune
+  return 0
+}
+
+# ut_diag_section LABEL — the last 40 lines a step printed (from the run log).
+ut_diag_section() {
+  awk -v head="######## $1 ########" '
+    $0 == head { on = 1; n = 0; next }
+    on && /^######## / && !/^######## (stalled|stopped|no password)/ { on = 0 }
+    on && !/^\[[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\] updatetools: / { line[n++] = $0 }
+    END { for (i = (n > 40 ? n - 40 : 0); i < n; i++) print line[i] }
+  ' "$LOG" 2>/dev/null
+}
+
+ut_diag_report() {
+  local i label brew_prefix
+  echo "updatetools diagnostics, $(date '+%Y-%m-%d %H:%M:%S %z')"
+  echo "$(updatetools_print_version 2>/dev/null || echo 'updatetools (version unknown)'), macOS $(sw_vers -productVersion 2>/dev/null) on $(uname -m)"
+  echo
+  echo "== Outcome"
+  if [ -n "${UT_HALT:-}" ]; then
+    echo "Stopped ($UT_HALT): ${UT_HALT_MSG:-$UT_HALT_CAUSE}"
+  else
+    echo "Finished; some steps failed."
+  fi
+  echo
+  echo "== Steps (status, reason, seconds, exit code)"
+  for ((i=0;i<TOTAL;i++)); do
+    label="${STEPS[i]%%¦*}"
+    printf '%-44s %-8s %-8s %6s %s\n' "$label" "${STATUS[i]:-}" "${STEP_WHY[i]:--}" \
+      "${STEP_SEC[i]:--}" "${STEP_RC[i]:+exit ${STEP_RC[i]}}${STEP_FORCED[i]:+ (forced to quit)}"
+  done
+  echo
+  echo "== Events"
+  grep -E '^\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] updatetools: ' "$LOG" 2>/dev/null || echo "(none logged)"
+  echo
+  echo "== Network"
+  echo "Last outage seen: ${UT_NET_WHY:-none while the steps ran}"
+  # Only failures raise the question; after a halt the answer is known or moot,
+  # and asking could wait out the probe's timeouts.
+  [ -n "${UT_HALT:-}" ] || echo "Probe now: $(ut_net_probe 2>&1)"
+  route -n get default 2>&1 | sed -n '1,8p'
+  scutil --nwi 2>&1 | sed -n '1,20p'
+  echo
+  echo "== Homebrew"
+  if have brew; then
+    brew --version 2>&1 | sed -n '1p'
+    brew_prefix="$(brew --prefix 2>/dev/null)"
+    # The lock files always exist; a lock is held while a process has it open.
+    echo "Homebrew locks held now (process, PID, lock):"
+    lsof +D "$brew_prefix/var/homebrew/locks" 2>/dev/null \
+      | awk 'NR > 1 { n = $NF; sub(/.*\//, "", n); print $1, $2, n; held = 1 } END { if (!held) print "none" }'
+  else
+    echo "not installed"
+  fi
+  echo
+  echo "== Disk"
+  df -h / 2>&1 | sed -n '2p'
+  for ((i=0;i<TOTAL;i++)); do
+    [ "${STATUS[i]}" = "fail" ] || continue
+    label="${STEPS[i]%%¦*}"
+    echo
+    echo "== Last output: $label"
+    ut_diag_section "$label"
+  done
+}
+
+# Ctrl+C, kill and a closed terminal end the run, never by leaving its tools
+# running: the step loop stops them safely, then the run ends. A second signal
+# while that is under way forces the stop.
+ut_on_signal() {
+  local sig="$1" i
+  # After the run, Ctrl+C is how the dashboard run is left: nothing to stop.
+  if [ -n "${UT_RUN_DONE:-}" ]; then
+    trap - INT TERM HUP
+    cleanup
+    case "$sig" in TERM) exit 143 ;; HUP) exit 129 ;; *) exit 130 ;; esac
+  fi
+  if [ -n "${UT_SIGNAL:-}" ]; then
+    UT_STOP_FORCE=1
+    ut_debug "signal: SIG$sig again, forcing the stop"
+    printf '\nupdatetools: forcing the stop.\n' >&2
+    return 0
+  fi
+  UT_SIGNAL="$sig"
+  ut_debug "signal: SIG$sig"
+  case "$sig" in
+    INT) ut_halt signal "Stopped by Ctrl+C." ;;
+    HUP) ut_halt signal "The terminal running updatetools was closed." ;;
+    *) ut_halt signal "Stopped by a kill signal (SIG$sig)." ;;
+  esac
+  for ((i=0;i<TOTAL;i++)); do
+    [ -n "${STEP_PID[i]:-}" ] || continue
+    printf '\nupdatetools: stopping safely; the running update gets up to %s s to exit. Press Ctrl+C again to force.\n' \
+      "${STOP_GRACE:-30}" >&2
+    return 0
+  done
+  ut_end_on_signal
+}
+
+# ut_end_on_signal — end the run after a signal, once nothing of it runs any
+# more, and say what happened where it can be seen. Exits 128 + the signal.
+ut_end_on_signal() {
+  local code=130 started="" i
+  case "${UT_SIGNAL:-INT}" in TERM) code=143 ;; HUP) code=129 ;; esac
+  for ((i=0;i<TOTAL;i++)); do
+    [ -n "${STEP_T0[i]:-}" ] && started=1
+    if [ "${STATUS[i]:-}" = "pending" ] && [ "${STEP_ON[i]:-1}" = "1" ]; then
+      STATUS[i]="skip"; STEP_WHY[i]="halted"
+    fi
+  done
+  if [ -z "$started" ]; then
+    UT_HALT_MSG="$UT_HALT_CAUSE No update had started; nothing was changed."
+    printf '\nupdatetools: %s\n' "$UT_HALT_MSG" >&2
+  elif [ -z "${UT_DIAG:-}" ]; then
+    UT_HALT_MSG="$(ut_halt_summary)"
+    ut_diag_save
+    printf '\nupdatetools: stopped. %s\n  Diagnostics: %s\n' "$UT_HALT_MSG" "${UT_DIAG:-not saved}" >&2
+  fi
+  if [ -n "${WEB_DIR:-}" ] && [ -d "$WEB_DIR" ]; then
+    ut_web_state done
+    # The page polls every 0.4 s: give it the last word before the server
+    # goes, unless a second signal asked not to wait.
+    [ -n "${UT_STOP_FORCE:-}" ] || sleep 1
+  fi
+  [ "$UT_SIGNAL" = "HUP" ] && ut_notify_halt
+  trap - INT TERM HUP
+  cleanup
+  exit "$code"
+}
+
+ut_notify_halt() {
+  local esc
+  [ "${NOTIFY_MODE:-always}" = "never" ] && return 0
+  esc="$(ut_osascript_escape "Stopped. ${UT_HALT_MSG:-$UT_HALT_CAUSE}")"
+  if ! osascript -e "display notification \"$esc\" with title \"updatetools\"" >/dev/null 2>&1; then
+    echo "updatetools: desktop notification failed (osascript)." >&2
+    return 1
+  fi
+}
+
+# ut_after_steps — right after the steps, while their logs still exist: keep
+# the evidence of a run that stopped or had failures, and say so. A run that a
+# signal stopped ends here.
+ut_after_steps() {
+  local i failed=""
+  ut_net_stop
+  for ((i=0;i<TOTAL;i++)); do
+    [ "${STATUS[i]:-}" = "fail" ] && failed=1
+    if [ -n "${UT_HALT:-}" ] && [ "${STATUS[i]:-}" = "pending" ] && [ "${STEP_ON[i]:-1}" = "1" ]; then
+      STATUS[i]="skip"; STEP_WHY[i]="halted"
+    fi
+  done
+  if [ -n "${UT_HALT:-}" ]; then
+    UT_HALT_MSG="$(ut_halt_summary)"
+    ut_diag_save
+    printf 'updatetools: stopped. %s\n  Diagnostics: %s\n' "$UT_HALT_MSG" "${UT_DIAG:-not saved}" >&2
+  elif [ -n "$failed" ]; then
+    ut_diag_save
+  fi
+  [ -n "${WEB_DIR:-}" ] && ut_web_state run
+  [ "${UT_HALT:-}" = "signal" ] && ut_end_on_signal
+  return 0
+}
+
+# ut_unfinished_run PID STEPS — the run PID never cleaned up after itself: it
+# was killed (kill -9), crashed, or the Mac lost power while STEPS ran, so its
+# tools may have been cut off mid-install. Keep its log and say what to check.
+ut_unfinished_run() {
+  local pid="$1" steps="$2" scratch="${TMPDIR:-/tmp}" names dir=""
+  if [ -n "$steps" ]; then
+    names="$(printf '%s\n' "$steps" | awk 'NF { sub(/ · .*/, ""); printf "%s%s", (n++ ? ", " : ""), $0 }')"
+    UT_PREV_WARN="The last run did not finish: it was killed, crashed or the Mac restarted while $names ran. This run finishes the update; if Homebrew was cut off, brew doctor lists what it left half-done."
+    if [ -f "$scratch/updatetools-$pid.log" ] && dir="$(ut_diag_dir)"; then
+      cp "$scratch/updatetools-$pid.log" "$dir/run.log"
+      printf 'The run with PID %s did not finish. Running then: %s\n' "$pid" "$names" > "$dir/diagnostics.txt"
+      ut_diag_prune
+    fi
+    printf 'updatetools: %s\n' "$UT_PREV_WARN" >&2
+    [ -n "$dir" ] && printf '  Its log: %s\n' "$dir" >&2
+  fi
+  rm -rf "$scratch/updatetools-$pid.log" "$scratch/updatetools-steps-$pid" \
+    "$scratch/updatetools-wrap-$pid" "$scratch/updatetools-updates-$pid.txt" "$scratch/updatetools-net-$pid" 2>/dev/null
+  return 0
+}
+
+# Match only processes actually *running* this script (argv[1]'s basename), not
+# any command line that merely mentions the path (an editor, a grep, a wrapper).
+live_sibling() {
+  local p args script
+  for p in $(pgrep -x bash 2>/dev/null); do
+    [ "$p" = "$$" ] && continue
+    args="$(ps -o args= -p "$p" 2>/dev/null)"
+    script="$(printf '%s\n' "$args" | awk '{print $2}')"
+    [ "${script##*/}" = "updatetools" ] && { printf '%s\n' "$p"; return 0; }
+  done
+  return 1
+}
+
+# Single-instance lock. Two concurrent runs collide on Homebrew's download lock:
+# one grabs the .incomplete bottle, the other dies "A `brew upgrade` process has
+# already locked ...". Refuse a second run; reclaim a stale lock whose owner is
+# gone. mkdir is atomic, so this is race-free without needing flock (absent on macOS).
+#
+# The pid file alone isn't enough: a run whose lock got reclaimed (stale pid file,
+# crash, closed terminal) stays alive and keeps painting the terminal, so two
+# dashboards end up fighting over the same screen. Scan for a live sibling first.
+#
+# A stale lock means its run never cleaned up: ut_unfinished_run says so.
+ut_acquire_lock() {
+  local other oldpid
+  other="$(live_sibling)"
+  if [ -n "$other" ]; then
+    echo "updatetools is already running (PID $other) — refusing to start a second run."
+    echo "Two dashboards would render over each other; kill it first:  kill $other"
+    return 1
+  fi
+  if mkdir "$LOCK_BASE" 2>/dev/null; then
+    LOCKDIR="$LOCK_BASE"; echo $$ > "$LOCKDIR/pid"
+    return 0
+  fi
+  oldpid="$(cat "$LOCK_BASE/pid" 2>/dev/null)"
+  if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+    echo "updatetools is already running (PID $oldpid) — refusing to start a second run."
+    echo "(Concurrent runs collide on Homebrew's download lock.)"
+    return 1
+  fi
+  [ -n "$oldpid" ] && ut_unfinished_run "$oldpid" "$(cat "$LOCK_BASE/steps" 2>/dev/null)"
+  rm -rf "$LOCK_BASE" 2>/dev/null
+  if mkdir "$LOCK_BASE" 2>/dev/null; then
+    LOCKDIR="$LOCK_BASE"; echo $$ > "$LOCKDIR/pid"
+    return 0
+  fi
+  echo "Could not acquire updatetools lock ($LOCK_BASE)."
+  return 1
 }
 
 # ===========================================================================
@@ -6790,10 +7541,12 @@ export GIT_TERMINAL_PROMPT=0
     fi
     ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
     SUDO_KEEPER=$!
+    ut_note_running
   fi
 
   # The read-only checks must not overlap the steps.
   ut_preflight_settle
+  ut_net_gate
   T0=$SECONDS; UT_CLOCK_HELD=""
 
   # Before any step, including when Homebrew itself is turned off.
@@ -6802,6 +7555,7 @@ export GIT_TERMINAL_PROMPT=0
 
   ut_run_steps
   UT_T_END=$SECONDS
+  UT_RUN_DONE=1
 
   # ── after: counts, the version diff, where things landed ──────────────────
   local done_n=0 skip_n=0 fail_n=0 staged_n=0
@@ -6878,9 +7632,15 @@ ut_web_summary_line() {
       fail) f=$((f+1)); label="${STEPS[i]%%¦*}"; failed="${failed:+$failed, }${label%% · *}" ;;
     esac
   done
+  if [ -n "${UT_HALT:-}" ]; then
+    printf 'updatetools: stopped after %s (see above). Close the dashboard tab to exit.\n' \
+      "$(fmt_time $(( ${UT_T_END:-$SECONDS} - T0 )))"
+    return 0
+  fi
   printf 'updatetools: finished in %s: %d done' "$(fmt_time $(( ${UT_T_END:-$SECONDS} - T0 )))" "$d"
   [ "$st" -gt 0 ] && printf ', %d waiting for apps to quit' "$st"
   [ "$f" -gt 0 ] && printf ', %d failed (%s)' "$f" "$failed"
+  [ -n "${UT_DIAG:-}" ] && printf '. Diagnostics: %s' "$UT_DIAG"
   printf '. Close the dashboard tab to exit.\n'
 }
 
@@ -6900,6 +7660,8 @@ ut_web_retry() {
   done
   UT_RUN_ROUND=$(( ${UT_RUN_ROUND:-1} + 1 ))
   UT_WEB_NOTICE=""
+  UT_HALT=""; UT_HALT_CAUSE=""; UT_HALT_MSG=""; UT_DIAG=""; UT_STOP_FORCE=""; UT_ICON_OFFLINE=0
+  UT_RUN_DONE=""; UT_SIGNAL=""
   UT_WEB_UPDATES_PREV="${UT_WEB_UPDATES:-}"
   T0=$SECONDS; UT_T_END=""; UT_CLOCK_HELD=1
   ut_web_state run
@@ -6908,6 +7670,7 @@ ut_web_retry() {
     if ut_require_sudo web; then
       ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
       SUDO_KEEPER=$!
+      ut_note_running
     else
       sudo_ok=0
       UT_WEB_NOTICE="The administrator password was not accepted, so nothing ran again. Every result below is from the earlier run."
@@ -6915,6 +7678,7 @@ ut_web_retry() {
   fi
   if [ "$sudo_ok" = "1" ]; then
     ut_preflight_settle
+    ut_net_gate
     T0=$SECONDS; UT_CLOCK_HELD=""
     rm -f "${UT_WEB_DATA:-}" 2>/dev/null
     ut_report_capture_cli
@@ -6937,6 +7701,7 @@ ut_web_retry() {
     [ "${k_on[i]}" = "1" ] && STEP_ON[i]=1
   done
   [ -n "${UT_T_END:-}" ] || UT_T_END=$SECONDS
+  UT_RUN_DONE=1
   ut_web_state "done"
   ut_save_durations
   ut_web_summary_line
@@ -6956,6 +7721,14 @@ run_plain() {
     STATUS[i]="pending"
     STEP_WHY[i]=""
   done
+  STEP_RC=(); STEP_FORCED=()
+  # ut_plain_halted I [PREFIX] — after a halt, a step not reached does not run.
+  ut_plain_halted() {
+    [ -n "${UT_HALT:-}" ] || return 1
+    STATUS[$1]="skip"; STEP_WHY[$1]="halted"
+    note "${2:-}not run (the run was stopped)"
+    return 0
+  }
 
   section "updatetools (plain)"
   note "steps: $(ut_all_step_keys)"
@@ -6965,7 +7738,9 @@ run_plain() {
     ut_require_sudo plain || return 1
     ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
     SUDO_KEEPER=$!
+    ut_note_running
   fi
+  ut_net_gate
   T0=$SECONDS
 
   ut_report_capture_cli
@@ -6980,6 +7755,7 @@ run_plain() {
     if [ "${STEP_ON[i]}" != "1" ]; then
       STATUS[i]="skip"; STEP_WHY[i]="off"; note "skipped (turned off)"; continue
     fi
+    ut_plain_halted "$i" && continue
     local guard="${entry#*¦}"; guard="${guard%%¦*}"
     if ! eval "$guard" >/dev/null 2>&1; then
       STATUS[i]="skip"; STEP_WHY[i]="guard"
@@ -7002,7 +7778,8 @@ run_plain() {
     local follow=$!
     ut_watch_pid "$pid" "$steplog"
     wait "$follow" 2>/dev/null
-    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED"
+    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED" "$UT_WAIT_HALTED" "$UT_WAIT_FORCED"
+    if [ "${STEP_WHY[i]:-}" = "stopped" ]; then note "stopped: ${UT_HALT_CAUSE}"; continue; fi
     case "${STATUS[i]}" in
       fail) note "failed (exit ${UT_WAIT_RC})" ;;
       staged) note "staged — applies on exit ($(fmt_time "${STEP_SEC[i]}"))" ;;
@@ -7021,6 +7798,7 @@ run_plain() {
     if [ "${STEP_ON[i]}" != "1" ]; then
       STATUS[i]="skip"; STEP_WHY[i]="off"; note "skipped (turned off)"; continue
     fi
+    ut_plain_halted "$i" && continue
     local guard="${entry#*¦}"; guard="${guard%%¦*}"
     if ! eval "$guard" >/dev/null 2>&1; then
       STATUS[i]="skip"; STEP_WHY[i]="guard"
@@ -7041,7 +7819,8 @@ run_plain() {
     local follow=$!
     ut_watch_pid "$pid" "$steplog"
     wait "$follow" 2>/dev/null
-    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED"
+    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED" "$UT_WAIT_HALTED" "$UT_WAIT_FORCED"
+    if [ "${STEP_WHY[i]:-}" = "stopped" ]; then note "stopped: ${UT_HALT_CAUSE}"; continue; fi
     case "${STATUS[i]}" in
       fail) note "failed (exit ${UT_WAIT_RC})" ;;
       staged) note "staged — applies on exit ($(fmt_time "${STEP_SEC[i]}"))" ;;
@@ -7065,6 +7844,7 @@ run_plain() {
       note "$label: skipped (turned off)"
       continue
     fi
+    ut_plain_halted "$i" "$label: " && continue
     local guard="${entry#*¦}"; guard="${guard%%¦*}"
     if ! eval "$guard" >/dev/null 2>&1; then
       STATUS[i]="skip"; STEP_WHY[i]="guard"
@@ -7086,6 +7866,14 @@ run_plain() {
     done
     while true; do
       any=0
+      ut_net_tick
+      if [ -n "${UT_HALT:-}" ]; then
+        ut_wave_stop "######## stopped: ${UT_HALT_CAUSE} ########" 1 "${wave_idx[@]}"
+        for i in "${wave_idx[@]}"; do
+          [ "${STEP_WHY[i]:-}" = "stopped" ] && note "${STEPS[i]%%¦*}: stopped"
+        done
+        break
+      fi
       for i in "${wave_idx[@]}"; do
         pid="${STEP_PID[i]:-}"
         [ -n "$pid" ] || continue
@@ -7097,7 +7885,8 @@ run_plain() {
             if [ "$size" != "${w_last_size[i]}" ]; then
               w_last_size[i]=$size; w_last_change[i]=$SECONDS
             elif [ $(( SECONDS - ${w_last_change[i]} )) -ge "$STALL_TIMEOUT" ]; then
-              kill_tree "$pid"; sleep 1; kill -KILL "$pid" 2>/dev/null
+              ut_debug "stall: no output or download for ${STALL_TIMEOUT}s; stopping ${STEPS[i]%%¦*} (PID $pid)"
+              ut_stop_tree "$pid"
               echo "######## stalled ${STALL_TIMEOUT}s with no output — killed ########" >> "$steplog"
               wait "$pid" 2>/dev/null
               ut_finish_step "$i" 1 1
@@ -7136,6 +7925,7 @@ run_plain() {
     if [ "${STEP_ON[i]}" != "1" ]; then
       STATUS[i]="skip"; STEP_WHY[i]="off"; note "skipped (turned off)"; continue
     fi
+    ut_plain_halted "$i" && continue
     local guard="${entry#*¦}"; guard="${guard%%¦*}"
     if ! eval "$guard" >/dev/null 2>&1; then
       STATUS[i]="skip"; STEP_WHY[i]="guard"
@@ -7156,7 +7946,8 @@ run_plain() {
     local follow=$!
     ut_watch_pid "$pid" "$steplog"
     wait "$follow" 2>/dev/null
-    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED"
+    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED" "$UT_WAIT_HALTED" "$UT_WAIT_FORCED"
+    if [ "${STEP_WHY[i]:-}" = "stopped" ]; then note "stopped: ${UT_HALT_CAUSE}"; continue; fi
     case "${STATUS[i]}" in
       fail) note "failed (exit ${UT_WAIT_RC})" ;;
       staged) note "staged ($(fmt_time "${STEP_SEC[i]}"))" ;;
@@ -7171,6 +7962,7 @@ run_plain() {
     if [ "${STEP_ON[i]}" != "1" ]; then
       STATUS[i]="skip"; STEP_WHY[i]="off"; note "skipped (turned off)"; continue
     fi
+    ut_plain_halted "$i" && continue
     UT_STEP_LOG_DIR="${UT_STEP_LOG_DIR:-${TMPDIR:-/tmp}/updatetools-steps-$$}"
     mkdir -p "$UT_STEP_LOG_DIR"
     STEP_PID=(); CUR_PIDS=""
@@ -7186,17 +7978,19 @@ run_plain() {
     local follow=$!
     ut_watch_pid "$pid" "$steplog"
     wait "$follow" 2>/dev/null
-    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED"
+    ut_finish_step "$i" "$UT_WAIT_RC" "$UT_WAIT_STALLED" "$UT_WAIT_HALTED" "$UT_WAIT_FORCED"
+    if [ "${STEP_WHY[i]:-}" = "stopped" ]; then note "stopped: ${UT_HALT_CAUSE}"; continue; fi
     case "${STATUS[i]}" in
       fail) note "failed (exit ${UT_WAIT_RC})" ;;
       staged) note "staged ($(fmt_time "${STEP_SEC[i]}"))" ;;
       *) note "done ($(fmt_time "${STEP_SEC[i]}"))" ;;
     esac
   done
+  ut_after_steps
   rm -rf "${UT_STEP_LOG_DIR:-}" 2>/dev/null
   UT_STEP_LOG_DIR=""
 
-  section "Done"
+  section "$([ -n "${UT_HALT:-}" ] && echo Stopped || echo Done)"
   for ((i=0;i<TOTAL;i++)); do
     case "${STATUS[i]}" in
       done) done_n=$((done_n+1)) ;;
@@ -7206,8 +8000,13 @@ run_plain() {
     esac
   done
   note "$done_n done · $staged_n staged · $skip_n skipped · $fail_n failed · $(fmt_time $((SECONDS-T0))) elapsed"
+  [ -n "${UT_DIAG:-}" ] && note "diagnostics: $UT_DIAG"
   UT_RUN_FAILS=$fail_n
-  ut_notify_end "$fail_n"
+  local notified
+  ut_notify_end "$fail_n"; notified=$?
+  # EX_TEMPFAIL: nothing is wrong with the Mac; run again once online.
+  [ "${UT_HALT:-}" = "network" ] && return 75
+  return "$notified"
 }
 
 
@@ -7305,7 +8104,7 @@ ut_notify_end() {
   case "${NOTIFY_MODE:-always}" in
     never) return 0 ;;
     on_error)
-      [ "$fails" -gt 0 ] 2>/dev/null || return 0
+      [ "$fails" -gt 0 ] 2>/dev/null || [ -n "${UT_HALT:-}" ] || return 0
       ;;
     always) ;;
     *)
@@ -7313,7 +8112,9 @@ ut_notify_end() {
       return 1
       ;;
   esac
-  if [ "$fails" -gt 0 ] 2>/dev/null; then
+  if [ -n "${UT_HALT:-}" ]; then
+    msg="Run stopped. $UT_HALT_CAUSE"
+  elif [ "$fails" -gt 0 ] 2>/dev/null; then
     if [ "$fails" -eq 1 ]; then
       msg="Run finished with 1 failure."
     else
@@ -7485,47 +8286,7 @@ fi
 # ===========================================================================
 # Dispatch
 # ===========================================================================
-# Single-instance lock. Two concurrent runs collide on Homebrew's download lock:
-# one grabs the .incomplete bottle, the other dies "A `brew upgrade` process has
-# already locked ...". Refuse a second run; reclaim a stale lock whose owner is
-# gone. mkdir is atomic, so this is race-free without needing flock (absent on macOS).
-#
-# The pid file alone isn't enough: a run whose lock got reclaimed (stale pid file,
-# crash, closed terminal) stays alive and keeps painting the terminal, so two
-# dashboards end up fighting over the same screen. Scan for a live sibling first.
-LOCK_BASE="${TMPDIR:-/tmp}/updatetools.lock"
-# Match only processes actually *running* this script (argv[1]'s basename), not
-# any command line that merely mentions the path (an editor, a grep, a wrapper).
-live_sibling() {
-  local p args script
-  for p in $(pgrep -x bash 2>/dev/null); do
-    [ "$p" = "$$" ] && continue
-    args="$(ps -o args= -p "$p" 2>/dev/null)"
-    script="$(printf '%s\n' "$args" | awk '{print $2}')"
-    [ "${script##*/}" = "updatetools" ] && { printf '%s\n' "$p"; return 0; }
-  done
-  return 1
-}
-other="$(live_sibling)"
-if [ -n "$other" ]; then
-  echo "updatetools is already running (PID $other) — refusing to start a second run."
-  echo "Two dashboards would render over each other; kill it first:  kill $other"
-  exit 1
-fi
-if mkdir "$LOCK_BASE" 2>/dev/null; then
-  LOCKDIR="$LOCK_BASE"; echo $$ > "$LOCKDIR/pid"
-else
-  oldpid="$(cat "$LOCK_BASE/pid" 2>/dev/null)"
-  if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
-    echo "updatetools is already running (PID $oldpid) — refusing to start a second run."
-    echo "(Concurrent runs collide on Homebrew's download lock.)"
-    exit 1
-  fi
-  rm -rf "$LOCK_BASE" 2>/dev/null
-  if mkdir "$LOCK_BASE" 2>/dev/null; then LOCKDIR="$LOCK_BASE"; echo $$ > "$LOCKDIR/pid"
-  else echo "Could not acquire updatetools lock ($LOCK_BASE)."; exit 1; fi
-fi
-
+ut_acquire_lock || exit 1
 
 # The browser dashboard needs a terminal to ask for the sudo password on;
 # anything non-interactive gets plain output.

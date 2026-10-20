@@ -55,7 +55,8 @@ Tools you don't have are skipped. At the end you see exactly what changed.
 - **Restarts what is safe to restart.** Open menu-bar utilities with nothing to lose (Rectangle, Maccy, Ice…) are quit, updated and reopened in the background, exactly as they were. Terminals, browsers, editors, password managers and anything hosting other processes are never quit. Nothing is ever force-killed.
 - **Never restarts your Mac.** Updates that need a restart are listed, not installed.
 - **Root only where needed.** sudo is dropped before npm, cargo, uv and other package updates run. [Details](SECURITY.md#what-updatetools-does-on-your-mac)
-- **Nothing to clean up.** Logs and the report are temporary unless you pass `--debug`.
+- **Stops cleanly when interrupted.** If the network drops for 30 s, or you press Ctrl+C, kill the run or close its terminal, the running tool is asked to stop and given time to exit on its own, nothing else starts, and both the dashboard and the terminal say what happened. [Details](docs/USAGE.md#when-a-run-is-interrupted)
+- **Nothing to clean up.** Logs and the report are temporary unless you pass `--debug`, or a run stops or fails: then its log and a report are kept in `~/Library/Logs/updatetools`.
 
 ## Common options
 
