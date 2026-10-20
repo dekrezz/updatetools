@@ -5550,9 +5550,11 @@ ut_web_state() {
   if [ "${DEBUG:-0}" = "1" ] && [ -n "${UT_WEB_REPORT:-}" ] && [ -f "$UT_WEB_REPORT" ]; then
     cp -f "$UT_WEB_REPORT" "$WEB_DIR/report.html" 2>/dev/null
   fi
+  local elapsed=$(( ${UT_T_END:-$SECONDS} - T0 ))
+  [ -n "${UT_CLOCK_HELD:-}" ] && elapsed=0
   {
     printf '{"phase":"%s","elapsed":%d,"total":%d,"done":%d,"skip":%d,"fail":%d,"staged":%d' \
-      "$phase" "$(( ${UT_T_END:-$SECONDS} - T0 ))" "$TOTAL" "$done_n" "$skip_n" "$fail_n" "$staged_n"
+      "$phase" "$elapsed" "$TOTAL" "$done_n" "$skip_n" "$fail_n" "$staged_n"
     if [ "$phase" = "error" ]; then
       printf ',"message":"%s"' "$(ut_json_escape "${UT_WEB_ERROR:-sudo password required but not accepted — aborting before steps.}")"
     fi
@@ -6214,7 +6216,7 @@ LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
 STATUS=(); STEP_T0=(); STEP_SEC=(); STEP_SLUG=(); STEP_IMG=(); STEP_WHY=()
 CUR_STEP=0; CUR_PID=""
 SUDO_KEEPER=""; WRAP_DIR=""; PROMPT_REQ=""; PROMPT_REP=""; LOCKDIR=""
-UT_WEB_REPORT=""; UT_WEB_UPDATES=""; SUDO_PW=""; UT_PROMPT=""
+UT_WEB_REPORT=""; UT_WEB_UPDATES=""; SUDO_PW=""; UT_PROMPT=""; UT_CLOCK_HELD=""
 UT_WEB_DATA="${TMPDIR:-/tmp}/updatetools-updates-$$.txt"
 export UT_WEB_DATA
 
@@ -6776,6 +6778,9 @@ export GIT_TERMINAL_PROMPT=0
   [ "${AUTO_START:-0}" = "1" ] || ut_save_enabled
   rm -f "$WEB_DIR/start"
 
+  # Password time and the wait for the checks are not part of the run: the
+  # clock reads 00:00 until the tools start, then only counts up.
+  UT_CLOCK_HELD=1
   # sudo only when a step that needs it will run; ut_run_steps drops it again
   # before the package-manager steps start.
   if ut_needs_sudo; then
@@ -6786,12 +6791,10 @@ export GIT_TERMINAL_PROMPT=0
     ( while true; do sleep 55; sudo -n -v 2>/dev/null || break; done ) &
     SUDO_KEEPER=$!
   fi
-  # Password time is not part of the run. The clock starts when tools start.
-  T0=$SECONDS
 
   # The read-only checks must not overlap the steps.
   ut_preflight_settle
-  T0=$SECONDS
+  T0=$SECONDS; UT_CLOCK_HELD=""
 
   # Before any step, including when Homebrew itself is turned off.
   ut_report_capture_cli
@@ -6898,7 +6901,7 @@ ut_web_retry() {
   UT_RUN_ROUND=$(( ${UT_RUN_ROUND:-1} + 1 ))
   UT_WEB_NOTICE=""
   UT_WEB_UPDATES_PREV="${UT_WEB_UPDATES:-}"
-  T0=$SECONDS; UT_T_END=""
+  T0=$SECONDS; UT_T_END=""; UT_CLOCK_HELD=1
   ut_web_state run
   local sudo_ok=1
   if ut_needs_sudo; then
@@ -6912,7 +6915,7 @@ ut_web_retry() {
   fi
   if [ "$sudo_ok" = "1" ]; then
     ut_preflight_settle
-    T0=$SECONDS
+    T0=$SECONDS; UT_CLOCK_HELD=""
     rm -f "${UT_WEB_DATA:-}" 2>/dev/null
     ut_report_capture_cli
     ut_report_capture_brew
