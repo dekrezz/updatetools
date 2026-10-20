@@ -1752,10 +1752,13 @@ ut_brew_meta() {
   if [ -n "$json" ] && [ "$(printf '%s' "$json" | jq -r '.casks | length' 2>/dev/null)" = "1" ]; then
     printf '%s' "$json" | jq -r '.casks[0].name[0] // empty'  > "$base.name"
     printf '%s' "$json" | jq -r '.casks[0].homepage // empty' > "$base.url"
+    printf '%s' "$json" | jq -r "[.casks[0].url] | $UT_JQ_GITHUB_SRC" > "$base.src" 2>/dev/null
   else
     json=$(brew info --json=v2 --formula "$k" 2>/dev/null)
     printf '%s' "$json" | jq -r '.formulae[0].name // empty'     > "$base.name" 2>/dev/null
     printf '%s' "$json" | jq -r '.formulae[0].homepage // empty' > "$base.url"  2>/dev/null
+    printf '%s' "$json" | jq -r "[.formulae[0].urls.stable.url, .formulae[0].urls.head.url] | $UT_JQ_GITHUB_SRC" \
+      > "$base.src" 2>/dev/null
   fi
   : > "$base.meta"
 }
@@ -1789,15 +1792,44 @@ ut_icon_homepage() {
   [ -s "$f" ] || return 1
   cat "$f"
 }
+# The jq filter that picks, from a list of download URLs, the first on GitHub.
+UT_JQ_GITHUB_SRC='map(select(type == "string" and test("^https?://github\\.com/[^/]+/"))) | first // ""'
+# ut_icon_source KEY — the GitHub URL KEY's source comes from (Homebrew's
+# metadata, cached by ut_brew_meta); empty when it is not on GitHub.
+ut_icon_source() {
+  local f="${XDG_CACHE_HOME:-$HOME/.cache}/updatetools/icons/${1//[^A-Za-z0-9._-]/_}.src"
+  [ -s "$f" ] && cat "$f"
+  return 0
+}
 
-# ut_icon_datauri HOMEPAGE — a data: URI for the site's icon, cached on disk.
+# DuckDuckGo's icon service answers a site it has no icon for with 404 and a
+# grey placeholder. Versions that fetched without curl -f cached that
+# placeholder as the site's icon; this is its sha256, so it is never shown.
+UT_ICON_PLACEHOLDER_SHA=e5db88ea2322863ca17817b99d60006c625a31cff0dad49cf05d3c6d16a75c17
+
+# ut_icon_fetch URL FILE — an image from URL into FILE. An HTTP error, an empty
+# answer or anything that is not an image fails, and leaves no FILE.
+ut_icon_fetch() {
+  curl -fsL --max-time 6 -o "$2.part" "$1" 2>/dev/null && [ -s "$2.part" ] \
+    && case "$(head -c 4 "$2.part" | od -An -tx1 | tr -d ' \n')" in 89504e47|ffd8ff*|52494646|00000100) true ;; *) false ;; esac \
+    && mv -f "$2.part" "$2" && return 0
+  rm -f "$2.part"
+  return 1
+}
+
+# ut_icon_datauri HOMEPAGE [SOURCE] — a data: URI for the project's icon,
+# cached on disk under the homepage's host (or GitHub org).
 #
-# Two sources, in order of how much they look like the project's actual logo:
+# In order of how much they look like the project's actual logo:
 #   github.com/<org>/…  -> the org's avatar (the real mark, not GitHub's favicon)
-#   anything else       -> the site's favicon
+#   anything else       -> the site's favicon; a site with none falls back to
+#                          the org's avatar for <org>.github.io, then the parent
+#                          domain's favicon (openmp.llvm.org -> llvm.org), then
+#                          the avatar of the GitHub org SOURCE comes from
 # Network failures are not fatal: the caller falls back to a monogram.
 ut_icon_datauri() {
-  local url=${1-} host org cache key file mime b64
+  local url=${1-} src=${2-} host org cache key file mime b64 parent
+  local -a try=()
   [ -z "$url" ] && return 1
   host=${url#*://}; host=${host%%/*}
   [ -z "$host" ] && return 1
@@ -1809,17 +1841,33 @@ ut_icon_datauri() {
     github.com)
       org=${url#*github.com/}; org=${org%%/*}
       [ -z "$org" ] && return 1
-      key="gh-$org"; url="https://github.com/$org.png?size=128" ;;
+      key="gh-$org"; try=("https://github.com/$org.png?size=128") ;;
     *)
-      key="$host"; url="https://icons.duckduckgo.com/ip3/$host.ico" ;;
+      key="$host"; try=("https://icons.duckduckgo.com/ip3/$host.ico")
+      case "$host" in *.github.io) try+=("https://github.com/${host%.github.io}.png?size=128") ;; esac
+      parent="$host"
+      while [ "${parent#*.*.}" != "$parent" ]; do
+        parent="${parent#*.}"
+        try+=("https://icons.duckduckgo.com/ip3/$parent.ico")
+      done
+      case "$src" in
+        http://github.com/*/*|https://github.com/*/*)
+          org=${src#*github.com/}; org=${org%%/*}
+          try+=("https://github.com/$org.png?size=128") ;;
+      esac ;;
   esac
   file="$cache/${key//[^A-Za-z0-9._-]/_}"
+  if [ -s "$file" ] && [ "$(shasum -a 256 < "$file" | cut -d' ' -f1)" = "$UT_ICON_PLACEHOLDER_SHA" ]; then
+    rm -f "$file"
+  fi
 
   if [ ! -s "$file" ]; then
     # The dashboard paints first and fetches missing icons in the background.
     [ "${UT_ICON_OFFLINE:-0}" = "1" ] && return 1
-    curl -sL --max-time 6 -o "$file" "$url" 2>/dev/null || return 1
-    [ -s "$file" ] || { rm -f "$file"; return 1; }
+    for url in "${try[@]}"; do
+      ut_icon_fetch "$url" "$file" && break
+    done
+    [ -s "$file" ] || return 1
     # Sites happily serve a 512px favicon for a 22px slot — downscale so the
     # report stays light (sips ships with macOS; skip quietly if it fails).
     if [ "$(wc -c < "$file")" -gt 8192 ] && command -v sips >/dev/null 2>&1; then
@@ -1861,12 +1909,12 @@ ut_app_icon_png() {
   mkdir -p "${out%/*}" 2>/dev/null && cp -f "$cache/$key.png" "$out"
 }
 
-# ut_site_icon_file URL BASE — the site's icon (cached, else fetched; see
-# ut_icon_datauri) written to BASE.<png|jpg|webp|ico>, so the dashboard loads
-# it as a file instead of carrying it in every state.json.
+# ut_site_icon_file URL BASE [SOURCE] — the project's icon (cached, else
+# fetched; see ut_icon_datauri) written to BASE.<png|jpg|webp|ico>, so the
+# dashboard loads it as a file instead of carrying it in every state.json.
 ut_site_icon_file() {
   local uri ext
-  uri="$(ut_icon_datauri "$1")" || return 1
+  uri="$(ut_icon_datauri "$1" "${3:-}")" || return 1
   case "${uri%%;*}" in
     data:image/png) ext=png ;; data:image/jpeg) ext=jpg ;;
     data:image/webp) ext=webp ;; data:image/x-icon) ext=ico ;; *) return 1 ;;
@@ -2253,7 +2301,7 @@ generate_html_report() {
       local uri="" home
       home=$(ut_icon_homepage "$key")
       [ -z "$home" ] && home=$(ut_icon_site "$display")
-      [ -n "$home" ] && uri=$(ut_icon_datauri "$home")
+      [ -n "$home" ] && uri=$(ut_icon_datauri "$home" "$(ut_icon_source "$key")")
       if [ -n "$uri" ]; then
         logo="<span class=\"logo\"><img src=\"$uri\" alt=\"\" loading=\"lazy\" decoding=\"async\"></span>"
       else
@@ -5924,15 +5972,17 @@ ut_plan_homebrew() {
 # Icons mark needs no file; otherwise the project's site icon (cached, else
 # fetched side by side, each capped by curl's own timeout) goes to DIR/icons.
 ut_plan_formula_icons() {
-  local dir="$1" homes t home pids=""
+  local dir="$1" homes t home src pids=""
   shift
   homes="$(brew info --formula --json=v2 "$@" 2>/dev/null \
-    | jq -r '.formulae[] | (.homepage // "") as $h | ([(.full_name // .name), $h], [.name, $h]) | @tsv' 2>/dev/null)"
+    | jq -r ".formulae[] | (.homepage // \"\") as \$h | ([.urls.stable.url, .urls.head.url] | $UT_JQ_GITHUB_SRC) as \$s
+        | ([(.full_name // .name), \$h, \$s], [.name, \$h, \$s]) | @tsv" 2>/dev/null)"
   for t in "$@"; do
     [ -n "$(ut_icon_slug "$t")" ] && continue
     home="$(printf '%s\n' "$homes" | awk -F'\t' -v t="$t" -v s="${t##*/}" '$1==t || $1==s { print $2; exit }')"
+    src="$(printf '%s\n' "$homes" | awk -F'\t' -v t="$t" -v s="${t##*/}" '$1==t || $1==s { print $3; exit }')"
     [ -n "$home" ] || continue
-    ut_site_icon_file "$home" "$dir/icons/${t//[^A-Za-z0-9._-]/_}" &
+    ut_site_icon_file "$home" "$dir/icons/${t//[^A-Za-z0-9._-]/_}" "$src" &
     pids="$pids $!"
   done
   # shellcheck disable=SC2086 # one pid per word
@@ -6191,9 +6241,9 @@ ut_history_write() {
 # not asked; the history file itself holds no icons.
 ut_history_json() {
   python3 -I - "$(ut_history_file)" "${1:-}" "${2:-}" \
-    "${XDG_CACHE_HOME:-$HOME/.cache}/updatetools/icons" "$(ut_history_icon_dir)" <<'HISTORY_PY'
-import json, os, re, shutil, sys
-path, tell, web, cache, kept = sys.argv[1], sys.argv[2] == 'tell', sys.argv[3], sys.argv[4], sys.argv[5]
+    "${XDG_CACHE_HOME:-$HOME/.cache}/updatetools/icons" "$(ut_history_icon_dir)" "$UT_ICON_PLACEHOLDER_SHA" <<'HISTORY_PY'
+import hashlib, json, os, re, shutil, sys
+path, tell, web, cache, kept, placeholder = sys.argv[1], sys.argv[2] == 'tell', sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
 
 def unavailable(why):
     msg = '%s: %s' % (path, why)
@@ -6253,7 +6303,12 @@ def site_icon(key):
         return None
     f = os.path.join(cache, SAFE.sub('_', name))
     ext = image(f)
-    return (f, 's-%s.%s' % (SAFE.sub('_', name), ext), False) if ext else None
+    if not ext:
+        return None
+    with open(f, 'rb') as h:
+        if hashlib.sha256(h.read()).hexdigest() == placeholder:
+            return None
+    return f, 's-%s.%s' % (SAFE.sub('_', name), ext), False
 
 def icon(u):
     key = SAFE.sub('_', str(u.get('k') or ''))
@@ -6434,7 +6489,7 @@ ut_web_updates() {
     if [ -z "$icon" ]; then
       slug="$(ut_icon_slug "$display")"
       if [ -z "$slug" ]; then
-        local home; home=$(ut_icon_homepage "$key") && img=$(ut_icon_datauri "$home") || img=""
+        local home; home=$(ut_icon_homepage "$key") && img=$(ut_icon_datauri "$home" "$(ut_icon_source "$key")") || img=""
       fi
     fi
     [ -n "$out" ] && out+=","
