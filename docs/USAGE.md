@@ -275,9 +275,11 @@ report to the Desktop as a self-contained HTML file.
 
 The run has no terminal UI. It serves a page on `127.0.0.1` (random port), opens
 it in your default browser, and prints one summary line in the terminal when the
-run is over. The page is one centred column in Antigravity's design language
-(Google Sans Flex, near-black ink on white or the reverse, 24px cards, pill
-buttons): a headline with its one action, then the sources, then the plan.
+run is over. The page speaks Antigravity's design language (Google Sans Flex,
+near-black ink on white or the reverse, 24px cards, pill buttons). Its main
+column has a headline with its one action, then the sources, then the plan; on
+a window 1200px or wider the [History](#run-history) panel sits beside it, and
+on a narrower one below it.
 
 - **Before the run** it checks, read-only and in the background, what Homebrew
   (and `mas`, when installed) would update, and lists each item with its old and
