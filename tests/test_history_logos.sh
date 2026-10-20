@@ -100,7 +100,6 @@ def served(k, src):
         return False, u
     path = os.path.join(web, img)
     return os.path.isfile(path) and open(path, 'rb').read() == open(src, 'rb').read(), u
-good, u = served('google-chrome', os.path.join(web, '..', 'none'))
 img = up.get('google-chrome', {}).get('img')
 chrome_bytes = open(os.path.join(web, img), 'rb').read() if isinstance(img, str) and os.path.isfile(os.path.join(web, img)) else b''
 ok("the app icon this run's plan showed is the logo of its update in the history",

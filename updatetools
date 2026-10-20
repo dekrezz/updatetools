@@ -5464,7 +5464,7 @@ WEB_HTML_HEAD
     const live = latestState && (latestState.steps || []).find((x) => x.key === k);
     return live ? logo(live.slug, live.img, live.n) : logo(slug || '', '', n);
   }
-  const toolLogo = (u) => logo(u.slug || '', '', u.n);
+  const toolLogo = (u) => logo(u.slug || '', u.img || '', u.n, u.app);
 
   async function loadHistory(want) {
     const pair = histPair({ hist: want });
@@ -6091,10 +6091,12 @@ ut_history_record() {
       "$(ut_history_file)" >&2
     return 1
   fi
-  # The report's records, read as ut_web_updates reads them; no icons.
+  # The report's records, read as ut_web_updates reads them; no icons in the
+  # record. The icon the plan showed is kept beside the icon cache instead.
   if [ -r "${UT_WEB_DATA:-}" ]; then
     while IFS='|' read -r key display old new url state || [ -n "${key:-}" ]; do
       [ -n "${key:-}" ] || continue
+      [ -n "${UT_PLAN_DIR:-}" ] && ut_history_keep_icon "$UT_PLAN_DIR" "$key"
       display=$(ut_pretty_name "$key" "${display:-$key}")
       slug="$(ut_icon_slug "$display")"
       e="{\"k\":\"$(ut_json_escape "$key")\",\"n\":\"$(ut_json_escape "$display")\""
@@ -6127,6 +6129,28 @@ ut_history_record() {
   if [ "$UT_RUN_MODE" = "dashboard" ]; then ut_history_serve; fi
 }
 
+# Where the icons the plans showed are kept for the History panel: the plan's
+# own dir goes away with its run.
+ut_history_icon_dir() {
+  printf '%s\n' "${XDG_CACHE_HOME:-$HOME/.cache}/updatetools/icons/kept"
+}
+# ut_history_keep_icon PLAN_DIR KEY — keep the icon the plan showed for KEY (an
+# app's own, with its .app mark, or the site's); a later one replaces it.
+ut_history_keep_icon() {
+  local safe ext dir
+  safe="${2//[^A-Za-z0-9._-]/_}"
+  dir="$(ut_history_icon_dir)"
+  for ext in png jpg webp ico; do
+    [ -s "$1/icons/$safe.$ext" ] || continue
+    mkdir -p "$dir" || return 1
+    rm -f "$dir/$safe.png" "$dir/$safe.jpg" "$dir/$safe.webp" "$dir/$safe.ico" "$dir/$safe.app"
+    cp -f "$1/icons/$safe.$ext" "$dir/$safe.$ext" || return 1
+    if [ -f "$1/icons/$safe.app" ]; then : > "$dir/$safe.app"; fi
+    return 0
+  done
+  return 1
+}
+
 # ut_history_save ID LINE — LINE becomes run ID's line in the history file: it
 # replaces the one a retry rewrites, else it is appended, and only the newest
 # HISTORY_KEEP lines remain. Lines that are not run records stay as they are.
@@ -6157,14 +6181,19 @@ ut_history_write() {
   return 1
 }
 
-# ut_history_json [tell] — the history for the page, {"v":1,"runs":[...]},
+# ut_history_json [tell] [WEB_DIR] — the history for the page, {"v":1,"runs":[...]},
 # newest first. A line that is not a run record is reported, never skipped or
 # repaired: {"v":1,"error":"FILE: line N is not a valid run record"}. With
-# tell, the terminal is told the same.
+# tell, the terminal is told the same. With WEB_DIR, each update gets the logo
+# the dashboard has for it, as a file under WEB_DIR/hist ("img", and "app" for
+# an app's own icon): the icon its run's plan showed, else (no Simple Icons
+# mark) its site's icon from the icon cache. Nothing is fetched, Homebrew is
+# not asked; the history file itself holds no icons.
 ut_history_json() {
-  python3 -I - "$(ut_history_file)" "${1:-}" <<'HISTORY_PY'
-import json, sys
-path, tell = sys.argv[1], sys.argv[2] == 'tell'
+  python3 -I - "$(ut_history_file)" "${1:-}" "${2:-}" \
+    "${XDG_CACHE_HOME:-$HOME/.cache}/updatetools/icons" "$(ut_history_icon_dir)" <<'HISTORY_PY'
+import json, os, re, shutil, sys
+path, tell, web, cache, kept = sys.argv[1], sys.argv[2] == 'tell', sys.argv[3], sys.argv[4], sys.argv[5]
 
 def unavailable(why):
     msg = '%s: %s' % (path, why)
@@ -6195,13 +6224,77 @@ for n, line in enumerate(lines, 1):
         unavailable('line %d is not a valid run record' % n)
     runs.append(run)
 runs.reverse()
+
+# The same files, names and checks as ut_icon_datauri and ut_history_keep_icon.
+SAFE = re.compile(r'[^A-Za-z0-9._-]')
+MAGIC = ((b'\x89PNG', 'png'), (b'\xff\xd8\xff', 'jpg'), (b'RIFF', 'webp'), (b'\x00\x00\x01\x00', 'ico'))
+
+def image(f):
+    try:
+        with open(f, 'rb') as h:
+            head = h.read(4)
+    except OSError:
+        return None
+    return next((ext for magic, ext in MAGIC if head.startswith(magic)), None)
+
+def site_icon(key):
+    try:
+        with open(os.path.join(cache, key + '.url'), encoding='utf-8', errors='replace') as f:
+            url = f.read().strip()
+    except OSError:
+        return None
+    host = (url.split('://', 1)[1] if '://' in url else url).split('/', 1)[0]
+    if host == 'github.com':
+        org = url.split('github.com/', 1)[1].split('/', 1)[0] if 'github.com/' in url else ''
+        name = 'gh-' + org if org else ''
+    else:
+        name = host
+    if not name:
+        return None
+    f = os.path.join(cache, SAFE.sub('_', name))
+    ext = image(f)
+    return (f, 's-%s.%s' % (SAFE.sub('_', name), ext), False) if ext else None
+
+def icon(u):
+    key = SAFE.sub('_', str(u.get('k') or ''))
+    if not key:
+        return None
+    for ext in ('png', 'jpg', 'webp', 'ico'):
+        f = os.path.join(kept, key + '.' + ext)
+        if image(f) == ext:
+            return f, 'k-%s.%s' % (key, ext), os.path.exists(os.path.join(kept, key + '.app'))
+    return None if u.get('slug') else site_icon(key)
+
+if web:
+    found = {}
+    for run in runs:
+        for u in run.get('up') or []:
+            if not isinstance(u, dict):
+                continue
+            k = u.get('k')
+            if k not in found:
+                found[k] = icon(u)
+                src = found[k] and found[k][0]
+                dst = found[k] and os.path.join(web, 'hist', found[k][1])
+                if src and not (os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(src)):
+                    try:
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        shutil.copyfile(src, dst)
+                    except OSError as e:
+                        sys.stderr.write('updatetools: the History panel cannot show the logo %s: %s\n' % (src, e.strerror or e))
+                        found[k] = None
+            if found[k]:
+                u['img'] = 'hist/' + found[k][1]
+                if found[k][2]:
+                    u['app'] = True
 print(json.dumps({'v': 1, 'runs': runs}, separators=(',', ':')))
 HISTORY_PY
 }
 
-# ut_history_serve [tell] — publish the history as $WEB_DIR/history.json, whole.
+# ut_history_serve [tell] — publish the history as $WEB_DIR/history.json, whole,
+# with the logo files it names.
 ut_history_serve() {
-  ut_history_json "${1:-}" > "$WEB_DIR/.history.tmp" && mv -f "$WEB_DIR/.history.tmp" "$WEB_DIR/history.json"
+  ut_history_json "${1:-}" "$WEB_DIR" > "$WEB_DIR/.history.tmp" && mv -f "$WEB_DIR/.history.tmp" "$WEB_DIR/history.json"
 }
 
 # ut_log_tail FILE — the last meaningful output line (no banners, no bars).
