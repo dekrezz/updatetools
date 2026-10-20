@@ -1452,7 +1452,8 @@ ut_update_manual_apps() {
 }
 
 ut_update_homebrew_all() {
-  local rc=0 cask_rc=0
+  local rc=0 cask_rc=0 times="$UT_REPORT_DIR/brew-times"
+  mkdir -p "$UT_REPORT_DIR" 2>/dev/null && : > "$times"
   brew update || rc=1
 
   # Keep this invisible in the dashboard: it is report bookkeeping, not a
@@ -1460,8 +1461,11 @@ ut_update_homebrew_all() {
   # any package changes. Re-captures brew outdated now that `brew update` ran.
   ut_report_begin
 
-  HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1 brew upgrade || rc=1
-  ut_upgrade_casks_smart "$GREEDY_FLAG"; cask_rc=$?
+  # Each package is timed on its way through, for the next run's estimate.
+  HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS=1 brew upgrade 2>&1 | ut_brew_timeline "$times"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+  ut_upgrade_casks_smart "$GREEDY_FLAG" 2>&1 | ut_brew_timeline "$times"
+  cask_rc=${PIPESTATUS[0]}
   if [ "$cask_rc" -eq 3 ]; then
     : # staged; keep unless a hard failure already happened
   elif [ "$cask_rc" -ne 0 ]; then
@@ -6085,6 +6089,130 @@ ut_plan_json() {
 ut_durations_file() {
   printf '%s\n' "${UPDATETOOLS_DURATIONS_FILE:-$HOME/.config/updatetools/durations}"
 }
+
+# How long Homebrew takes depends on what it upgrades, so it is timed per
+# package (like yay's "previous duration" or genlop's estimate): "package NAME
+# SECONDS" lines, the last time of each, and "base SECONDS", Homebrew's own time
+# (brew update, cleanup) in the last run that finished the step.
+ut_package_times_file() {
+  printf '%s\n' "${UPDATETOOLS_PACKAGE_TIMES_FILE:-$HOME/.config/updatetools/package-times}"
+}
+
+# ut_brew_timeline FILE — pass Homebrew's output through, line for line, and
+# note in FILE when the command began ("S begin"), when each package starts
+# ("S start NAME", from "==> Upgrading NAME" or ut_upgrade_casks_smart's
+# ">> NAME:") and when the command ended ("S end"), S being $SECONDS.
+ut_brew_timeline() {
+  local f="$1" line name last=""
+  printf '%s begin\n' "$SECONDS" >> "$f"
+  while IFS= read -r line || [ -n "$line" ]; do
+    printf '%s\n' "$line"
+    case "$line" in
+      "==> Upgrading "*" outdated package"*) name="" ;;
+      "==> Upgrading "*) name="${line#==> Upgrading }"; name="${name%% *}" ;;
+      ">> "*": "*) name="${line#>> }"; name="${name%%: *}" ;;
+      *) name="" ;;
+    esac
+    case "$name" in ''|*[[:space:]]*) continue ;; esac
+    [ "$name" = "$last" ] && continue
+    printf '%s start %s\n' "$SECONDS" "$name" >> "$f"
+    last="$name"
+  done
+  printf '%s end\n' "$SECONDS" >> "$f"
+}
+
+# ut_save_package_times — keep each package's time from this run's Homebrew
+# step: its span to the next package (or the command's end) plus its share of
+# the downloads before the first package of its command. Homebrew's own time
+# is the rest of the step, kept when the step finished. Other packages' times
+# stay as they were.
+ut_save_package_times() {
+  local f times i hb="" base="" dir
+  times="${UT_REPORT_DIR:-}/brew-times"
+  [ -s "$times" ] || return 0
+  for ((i=0;i<TOTAL;i++)); do [ "${STEP_KEY[i]}" = homebrew ] && hb=$i; done
+  [ -n "$hb" ] || return 0
+  case "${STATUS[hb]:-}" in done|staged) base="${STEP_SEC[hb]:-}" ;; esac
+  f="$(ut_package_times_file)"; dir="$(dirname "$f")"
+  mkdir -p "$dir" || return 1
+  { [ -r "$f" ] && cat "$f"; printf 'run\n'; cat "$times"; } | awk -v step="$base" '
+    function flush(t,   j, pre) {
+      if (n == 0) return
+      pre = (s[1] - b) / n
+      for (j = 1; j <= n; j++) {
+        if (j < n) span = s[j + 1] - s[j]; else if (t != "") span = t - s[j]; else continue
+        v = int(span + pre + 0.5); new[p[j]] = v; used += v
+        if (!(p[j] in seen)) { seen[p[j]] = 1; order[++k] = p[j] }
+      }
+      n = 0
+    }
+    !run && $1 == "base" { old_base = $2; next }
+    !run && $1 == "package" { new[$2] = $3; if (!($2 in seen)) { seen[$2] = 1; order[++k] = $2 }; next }
+    $1 == "run" { run = 1; next }
+    run && $2 == "begin" { flush(""); b = $1; n = 0; next }
+    run && $2 == "start" { s[++n] = $1; p[n] = $3; next }
+    run && $2 == "end" { flush($1); next }
+    END {
+      flush("")
+      if (step != "") { r = step - used; base = (r > 0 ? r : 0) } else base = old_base
+      if (base != "") print "base", base
+      for (j = 1; j <= k; j++) print "package", order[j], new[order[j]]
+    }' > "$f.tmp.$$" && mv -f "$f.tmp.$$" "$f" && return 0
+  rm -f "$f.tmp.$$"
+  return 1
+}
+
+# ut_homebrew_estimate — Homebrew's expected seconds for the packages named on
+# stdin, one per line: its own time plus each package's last time; a package
+# never timed counts as the median of those that were. No estimate (fails)
+# while its own time is unknown, or for a new package with nothing timed yet.
+ut_homebrew_estimate() {
+  local f; f="$(ut_package_times_file)"
+  [ -r "$f" ] || return 1
+  awk -v f="$f" '
+    BEGIN {
+      while ((getline l < f) > 0) {
+        split(l, a, " ")
+        if (a[1] == "base") base = a[2]
+        else if (a[1] == "package") { t[a[2]] = a[3]; v[++n] = a[3] + 0 }
+      }
+      for (i = 2; i <= n; i++) { x = v[i]; for (j = i - 1; j >= 1 && v[j] > x; j--) v[j + 1] = v[j]; v[j + 1] = x }
+      if (n) med = (n % 2 ? v[(n + 1) / 2] : (v[n / 2] + v[n / 2 + 1]) / 2)
+    }
+    NF { want[++m] = $1 }
+    END {
+      if (base == "") exit 1
+      sum = base
+      for (i = 1; i <= m; i++) {
+        if (want[i] in t) sum += t[want[i]]
+        else if (n) sum += med
+        else exit 1
+      }
+      print int(sum + 0.5)
+    }'
+}
+
+# ut_homebrew_est_refresh — the Homebrew step's estimate, from what it will
+# upgrade: the list brew outdated left in the report dir (after brew update,
+# once it has run), else the plan's; none until one of them is in.
+ut_homebrew_est_refresh() {
+  local i hb="" src="" field stamp
+  for ((i=0;i<TOTAL;i++)); do [ "${STEP_KEY[i]}" = homebrew ] && hb=$i; done
+  [ -n "$hb" ] || return 0
+  case "${STATUS[hb]:-}" in pending|run|'') ;; *) return 0 ;; esac
+  if [ -f "${UT_REPORT_DIR:-/nonexistent}/brew" ]; then
+    src="$UT_REPORT_DIR/brew"; field=1
+  elif [ -n "${UT_PLAN_DIR:-}" ] && [ -f "$UT_PLAN_DIR/homebrew.done" ] && [ -f "$UT_PLAN_DIR/homebrew.plan" ]; then
+    src="$UT_PLAN_DIR/homebrew.plan"; field=6
+  else
+    STEP_EST[hb]=""; UT_HB_EST_STAMP=""
+    return 0
+  fi
+  stamp="$src $(stat -f %m "$src" 2>/dev/null) $(wc -c < "$src")"
+  [ "$stamp" = "${UT_HB_EST_STAMP:-}" ] && return 0
+  UT_HB_EST_STAMP="$stamp"
+  STEP_EST[hb]="$(cut -d'|' -f"$field" < "$src" | ut_homebrew_estimate)" || STEP_EST[hb]=""
+}
 ut_duration_of() { # $1 key -> seconds from the last run that ran it
   local f; f="$(ut_durations_file)"
   [ -r "$f" ] || return 1
@@ -6102,6 +6230,7 @@ ut_save_durations() {
     done
   } | awk '{ v[$1]=$2; if (!($1 in o)) { o[$1]=++n; k[n]=$1 } } END { for (i=1;i<=n;i++) print k[i], v[k[i]] }' > "$tmp" 2>/dev/null \
     && mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  ut_save_package_times
   return 0
 }
 
@@ -6371,6 +6500,7 @@ ut_log_tail() {
 ut_web_state() {
   [ -n "$WEB_DIR" ] || return 0
   local phase="${1:-run}" live_logs="" i done_n=0 skip_n=0 fail_n=0 staged_n=0 steps="" tail_line="" label name action slug key
+  ut_homebrew_est_refresh
   for ((i=0;i<TOTAL;i++)); do
     case "${STATUS[i]}" in
       done) done_n=$((done_n+1));;

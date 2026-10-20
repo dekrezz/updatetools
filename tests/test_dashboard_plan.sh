@@ -175,7 +175,9 @@ STATUS=(); STEP_SEC=(); STEP_T0=(); STEP_WHY=(); STEP_AVAIL=(); STEP_EST=(); STE
 for ((i=0;i<TOTAL;i++)); do STATUS[i]=pending; STEP_AVAIL[i]=1; STEP_ON[i]=1; done
 npm_i=-1; for ((i=0;i<TOTAL;i++)); do [ "${STEP_KEY[i]}" = npm ] && npm_i=$i; done
 STEP_AVAIL[1]=0
-STEP_EST[0]=42
+# A step's last time is its estimate; Homebrew's (step 0) is its packages' own
+# (tests/test_homebrew_estimate.sh), so the App Store step carries this one.
+STEP_EST[2]=42
 STATUS[npm_i]=run; STEP_T0[npm_i]=$SECONDS
 UT_STEP_LOG_DIR="$tmp/steps"; mkdir -p "$UT_STEP_LOG_DIR"
 printf '\n######## npm · global packages ########\nupgrading typescript\n' > "$UT_STEP_LOG_DIR/$npm_i.log"

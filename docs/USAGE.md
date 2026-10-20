@@ -158,6 +158,7 @@ The report step stays last.
 | `UPDATETOOLS_ENABLED_FILE` | Override path for the saved enabled-step list. |
 | `AUTO_START=1` | `--yes` |
 | `UPDATETOOLS_DURATIONS_FILE` | Override `~/.config/updatetools/durations`, where each step's last run time is kept for the dashboard's time estimate. |
+| `UPDATETOOLS_PACKAGE_TIMES_FILE` | Override `~/.config/updatetools/package-times`, where each Homebrew package's last upgrade time and Homebrew's own time are kept. Homebrew's estimate is its own time plus the last time of each package it will upgrade (the plan's list, then the one `brew update` leaves); a package never timed counts as the median of those that were, and with nothing timed yet there is no estimate. |
 | `UPDATETOOLS_HISTORY_FILE` | Override `~/.config/updatetools/history`, where the [run history](#run-history) is kept. |
 | `HISTORY_KEEP` | How many runs the history keeps (default `200`). |
 | `STALL_TIMEOUT` | Seconds a step may show no progress before it is stopped (default `300`, `0` turns it off). A Homebrew download that is still arriving counts as progress, though Homebrew prints nothing while it downloads. |
