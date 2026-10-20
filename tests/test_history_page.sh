@@ -9,7 +9,8 @@
 #     - per run: the median length of the runs that were not stopped;
 #     - a run older than that is not counted;
 #   * a run length from an hour up reads "{h}h {mm}m" with whole minutes, so
-#     1h 59m 30s reads "2h 00m", never "1h 60m";
+#     1h 59m 30s reads "2h 00m", never "1h 60m"; a length that rounds to 60
+#     minutes is an hour: 59m 50s reads "1h 00m", never "60 min";
 #   * a chart of those 30 days, today last. Each day has its updates, runs and
 #     failed runs. A day without a run is empty;
 #   * "Updated most often", over the whole file: tools updated at least twice,
@@ -22,11 +23,13 @@
 #     The page reads history.json again, once, for each {id, rev} it has not
 #     loaded. If that run is not in the file, it says so and does not retry;
 #   * "Usual time per source": the median of a source's last 10 done or staged
-#     entries. Failed and stopped entries are left out;
+#     entries. Failed and stopped entries are left out. Its count says how many
+#     runs that is: "last 10 runs", fewer while the file holds fewer, "last run";
 #   * logos come from the slugs in the data: the page has no client-side copy of
 #     ut_icon_slug, and an entry without a slug gets a monogram;
 #   * a history.json with an error ({"v":1,"error":"..."}) or an unknown version
-#     shows "History is unavailable." with the reason. An empty one shows
+#     shows "History is unavailable." with the reason; a path in the reason
+#     may wrap after each "/", never inside a name. An empty one shows
 #     "No runs recorded yet.";
 #   * during a run, the panel has no alarm colour. The live run is the only
 #     colour on the page. Red returns in choose and done.
@@ -203,7 +206,8 @@ ${CHUNK}
 
 /* ── reading the panel's markup ─────────────────────────────────────────────── */
 const ENT = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
-const text = (s) => String(s || '').replace(/<[^>]*>/g, ' ').replace(/&(?:amp|lt|gt|quot|#39);/g, (m) => ENT[m])
+// As textContent reads it: a <wbr> is a place to wrap, not a space.
+const text = (s) => String(s || '').replace(/<wbr\s*\/?>/gi, '').replace(/<[^>]*>/g, ' ').replace(/&(?:amp|lt|gt|quot|#39);/g, (m) => ENT[m])
   .replace(/\s+/g, ' ').trim();
 const noSr = (s) => String(s || '').replace(/<span class="sr">[\s\S]*?<\/span>/g, '');
 const sectionOf = (h, title) => (h.match(/<section\b[\s\S]*?<\/section>/g) || [])
@@ -279,6 +283,8 @@ const MAIN = [
     eq('per run is the median length of the runs that were not stopped', fig(h, 'per run'), '3m 20s');
     eq('a run of an hour or more reads hours and whole minutes, never 60 minutes',
       [3600, 3725, 7170, 7199].map(p.need('histDur')), ['1h 00m', '1h 02m', '2h 00m', '2h 00m']);
+    eq('a run that rounds to 60 minutes reads 1h 00m, not 60 min',
+      [3569, 3570, 3590, 3599].map(p.need('histDur')), ['59 min', '1h 00m', '1h 00m', '1h 00m']);
     const inWin = p.need('histWindow')(MAIN).map((r) => r.id);
     eq('the window starts at local midnight 29 days ago and drops older runs', inWin,
       ['r-today', 'r-today-fail', 'r-yesterday', 'r-halted', 'r-10', 'r-29']);
@@ -461,6 +467,14 @@ const MAIN = [
     eq("a source's time is the median of its last 10 done or staged entries, failed and stopped ones left out",
       (rows[0] || {}).t, '2m 25s');
     eq('a source with one entry shows that time', (rows[1] || {}).t, '5s');
+    const count = (h) => text((sectionOf(h, 'Usual time per source').match(/class="count"[^>]*>([\s\S]*?)<\/span>/) || [])[1]);
+    eq('with 10 runs or more, the section counts the last 10 runs', count(p.panel()), 'last 10 runs');
+    const few = await page(serve({ v: 1, runs: runs.slice(2, 5) }));
+    await few.tick(st('choose'));
+    eq('with fewer runs in the file, it counts the runs there are', count(few.panel()), 'last 3 runs');
+    const one = await page(serve({ v: 1, runs: runs.slice(2, 3) }));
+    await one.tick(st('choose'));
+    eq('with one run, it says the last run', count(one.panel()), 'last run');
 
     /* 7. source logos */
     const row = (n) => (rows.find((x) => x.name === n) || { r: '' }).r;
@@ -480,6 +494,7 @@ const MAIN = [
     let h = await card(serve({ v: 1, error: why }));
     ok('a history file the server could not read shows "History is unavailable."', text(h).includes('History is unavailable.'), text(h).slice(0, 160));
     ok('with the reason from history.json, in mono', code(h).includes(why), code(h));
+    ok('a path in the reason may wrap after each /, not inside a name', /updatetools\/<wbr>history:/.test(h), h.slice(0, 300));
     h = await card(serve({ v: 2, runs: [] }));
     ok('an unknown version shows "History is unavailable."', text(h).includes('History is unavailable.'), text(h).slice(0, 160));
     ok('with the version it does not know', code(h).includes('history.json has an unknown format (v2)'), code(h));
