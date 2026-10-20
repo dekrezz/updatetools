@@ -6720,12 +6720,22 @@ ut_web_stop() {
   WEB_DIR=""
 }
 
+# Global npm packages that another step installs: Codex CLI, Claude Code (when
+# npm-installed, `claude update` runs npm), Supabase CLI, Vercel CLI. Only that
+# step touches them. The npm step runs at the same time as Codex CLI and Claude
+# Code, and two `npm install -g` of one package collide in its directory
+# (ENOTEMPTY); a step that is switched off also leaves its tool alone.
+UT_NPM_OWNED="@openai/codex @anthropic-ai/claude-code supabase vercel"
+
 npm_update_global() {
   # npm itself lives in /opt/homebrew and is brew-managed; npm update -g includes it
-  # and fails with EACCES. Update only non-npm packages explicitly.
+  # and fails with EACCES. Update only non-npm packages explicitly, and none
+  # that another step owns.
   local pkgs rc=0
   pkgs=$(npm outdated -g --depth=0 --parseable 2>/dev/null \
-    | cut -d: -f4 | sed 's/@[^@]*$//' | grep -v '^npm$' | tr '\n' ' ')
+    | cut -d: -f4 | sed 's/@[^@]*$//' \
+    | awk -v skip="npm $UT_NPM_OWNED" 'BEGIN { n = split(skip, s, " "); for (i = 1; i <= n; i++) own[s[i]] = 1 } !($0 in own)' \
+    | tr '\n' ' ')
   if [ -n "$pkgs" ]; then
     npm install -g $pkgs || rc=$?
   fi

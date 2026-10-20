@@ -16,7 +16,7 @@ Covered today (matches the script's step table):
 | App Store | `mas update`; an open app is restarted if it is safe to restart, otherwise left for the next run |
 | Homebrew | `brew update`, formula & cask upgrades (greedy), autoremove, cleanup |
 | Direct-download apps | Strictly matched drag-and-drop `.app` bundles from DMGs; open apps are restarted only when safe to restart, otherwise staged until they quit |
-| Node | `npm` globals, `pnpm` |
+| Node | `npm` globals (except the CLIs below, which their own steps update), `pnpm` |
 | Python | `uv` (self + tools) |
 | Rust | `cargo install-update` |
 | CLIs | Supabase, Vercel, Claude Code (`claude update`), Codex (npm-only), Antigravity (`agy update`), `gh` extensions |
