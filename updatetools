@@ -4202,6 +4202,16 @@ WEB_HTML_HEAD
     }
     return serial + wave;
   }
+  // The tab's percentage says what "about N min left" says: the share of the
+  // expected time behind. Steps are too uneven to count (Homebrew alone is most
+  // of a run); only without an estimate are they all there is.
+  function runPercent(st, counts) {
+    const left = estimateLeft(st), elapsed = st.elapsed || 0;
+    const finished = counts.done + counts.skip + counts.fail + counts.staged;
+    const pct = left != null && elapsed + left > 0 ? (100 * elapsed) / (elapsed + left)
+      : counts.total ? (100 * finished) / counts.total : 0;
+    return Math.min(99, Math.floor(pct));
+  }
   function paintHeader(st, counts) {
     const h = $('headline'), p = $('phase');
     let head = 'updatetools', sub = '';
@@ -4226,8 +4236,7 @@ WEB_HTML_HEAD
         : 'Starting…';
       const left = estimateLeft(st);
       sub = `<b>${finished}</b> of ${counts.total} done` + (left != null && left > 0 ? ` · about ${left < 60 ? 'a minute' : `${Math.round(left / 60)} min`} left` : '');
-      const pct = counts.total ? Math.round((100 * finished) / counts.total) : 0;
-      document.title = `updatetools · ${pct}%`;
+      document.title = `updatetools · ${runPercent(st, counts)}%`;
     } else if (st.phase === 'done') {
       const ups = st.updates || [];
       const restarted = ups.filter((u) => u.st === 'restarted').length;
