@@ -23,8 +23,9 @@ ln -s "$JQ" "$tmp/bin/jq"
 # The network: $tmp/net/<url with / : ? = & as _> is a 200 body; a .404 file
 # is a 404 whose body is the placeholder. curl -f/--fail fails on a 404 (exit
 # 22, writes nothing); without it the placeholder is written as if it were fine.
+# DuckDuckGo's placeholder, byte for byte (as it answered on 2026-10-21).
 PLACEHOLDER="$tmp/placeholder"
-printf '\211PNG\r\n\032\nduckduckgo-grey-placeholder' > "$PLACEHOLDER"
+printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAyhpVFh0WE1MOmNvbS5hZG9iZS54bXAAAAAAADw/eHBhY2tldCBiZWdpbj0i77u/IiBpZD0iVzVNME1wQ2VoaUh6cmVTek5UY3prYzlkIj8+IDx4OnhtcG1ldGEgeG1sbnM6eD0iYWRvYmU6bnM6bWV0YS8iIHg6eG1wdGs9IkFkb2JlIFhNUCBDb3JlIDUuNS1jMDIxIDc5LjE1NTc3MiwgMjAxNC8wMS8xMy0xOTo0NDowMCAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczp4bXBNTT0iaHR0cDovL25zLmFkb2JlLmNvbS94YXAvMS4wL21tLyIgeG1sbnM6c3RSZWY9Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9zVHlwZS9SZXNvdXJjZVJlZiMiIHhtcDpDcmVhdG9yVG9vbD0iQWRvYmUgUGhvdG9zaG9wIENDIDIwMTQgKE1hY2ludG9zaCkiIHhtcE1NOkluc3RhbmNlSUQ9InhtcC5paWQ6QkI4OUQxMDdDQTYwMTFFNEJGMThCRkI4NTA4NTkyNkYiIHhtcE1NOkRvY3VtZW50SUQ9InhtcC5kaWQ6QkI4OUQxMDhDQTYwMTFFNEJGMThCRkI4NTA4NTkyNkYiPiA8eG1wTU06RGVyaXZlZEZyb20gc3RSZWY6aW5zdGFuY2VJRD0ieG1wLmlpZDpCQjg5RDEwNUNBNjAxMUU0QkYxOEJGQjg1MDg1OTI2RiIgc3RSZWY6ZG9jdW1lbnRJRD0ieG1wLmRpZDpCQjg5RDEwNkNBNjAxMUU0QkYxOEJGQjg1MDg1OTI2RiIvPiA8L3JkZjpEZXNjcmlwdGlvbj4gPC9yZGY6UkRGPiA8L3g6eG1wbWV0YT4gPD94cGFja2V0IGVuZD0iciI/PjGq5lQAAAI0SURBVHja1Jo9jsIwEIW9Fh17gBxgD0B63EPPBXIBDkAP/Ub0XIAeeuiTA3CAHID061mNkWXlPzN28qQRQojkffZkPEn8dT6fBYFiHSv8jDCqVGBkOnL8HKXFSNNbHUrHsuN/DNwKv5c6HjpuQ2EWA40nlokxAvANBszIpS9IHwAYub2OteARDMivjqeOFFOtVbLjwRWODpd5W2s8l6ICgFE/9shzQZRaRzz3KICDjp0Ipx16GARwwIsrtDZNELIhbaZg3obYdwVQgdOmKZ1UG0DUlnOBdXBXeVmROssJAyzdVJLOCktV51867ozrRFy1EieE5mGU3tYFSK3EtBzS6SapzZ+YZsJ0vh+ALYN5wQyxtQEUEcC75jcOCGUAYqLKs2kpwdQQ4DmWRLkfCmIl7ZI0Q4j/GYh8N2CEEBEXgC+ISApesUNwA7BD+ABglQ+AO44yy52fnLN5A1DM1Tx45wLwYf4DkM3UPCgDgHym5kG5mYFyhuZLMwOgB8EBf3R8ezL/8WwAbkQAaQUE1xO+mw2QEV0LLgSX+dy9qQddiA5uIDifrV6qVmIgehJCcJl/2qXfbSVSoorEpRI91vZCRUspDK2T2znImvJ0naD5a1W5r+tGU8H3bHPoIpn2badPE4FoXOFlh5y7Bk6bxmuyy3viFMsW1HVf7w5KNN7a4nS9I4MDJYTrRFudT7r2Z33e1Bc4C5RbDdz2gHWrgb1iZ2LYZo+qVPG+2cMFESLgdps/AQYA9D2Sc4DqpGYAAAAASUVORK5CYII=' | base64 -D > "$PLACEHOLDER"
 cat > "$tmp/bin/curl" <<EOF
 #!/bin/bash
 out="" url="" fail=0
@@ -137,17 +138,17 @@ icon_is "$P/icons/pgbackrest" png pgbackrest-org-avatar && pass "plan: a site wi
   || fail "plan: a site with no icon shows the avatar of the GitHub org its source comes from"
 ls "$P/icons/nowhere".* >/dev/null 2>&1 && fail "plan: with no icon anywhere there is no logo file ($(ls "$P/icons"))" \
   || pass "plan: with no icon anywhere there is no logo file"
-if grep -rl 'duckduckgo-grey-placeholder' "$P" "$C" >/dev/null 2>&1; then
-  fail "plan: the placeholder is never anyone's logo ($(grep -rl 'duckduckgo-grey-placeholder' "$P" "$C" | tr '\n' ' '))"
-else
-  pass "plan: the placeholder is never anyone's logo"
-fi
+same=""
+for f in "$P"/icons/* "$C"/*; do
+  [ -f "$f" ] && [ "$f" != "$C/ghost.example" ] && [ "$f" != "$C/stale.example" ] && cmp -s "$f" "$PLACEHOLDER" && same="$same ${f##*/}"
+done
+[ -z "$same" ] && pass "plan: the placeholder is never anyone's logo" || fail "plan: the placeholder is never anyone's logo (it is:$same)"
 
 # The run's record (no plan icons): logos come from Homebrew's cached metadata.
 printf '%s\n' 'libssh2|libssh2|1.11.0|1.11.1||' 'stale|stale|1.0|1.1||' 'nowhere|nowhere|1.0|1.1||' > "$tmp/updates"
 UT_PLAN_DIR=""
 printf '[%s]' "$(ut_web_updates "$tmp/updates" 2>/dev/null)" > "$tmp/updates.json"
-"$PY" -I - "$tmp/updates.json" <<'PY' || failures=$((failures + 1))
+"$PY" -I - "$tmp/updates.json" "$PLACEHOLDER" <<'PY' || failures=$((failures + 1))
 import base64, json, sys
 fails = 0
 def ok(name, cond, why=''):
@@ -161,11 +162,14 @@ except Exception as e:
 def img(n):
     u = ups.get(n, {}).get('img', '')
     return base64.b64decode(u.split(',', 1)[1]) if u.startswith('data:') else None
+def short(n):
+    b = img(n)
+    return None if b is None else b[:40]
 ok("record: a site with no icon shows the avatar of the GitHub org its source comes from (Homebrew's head URL)",
-   img('libssh2') == b'\x89PNG\r\n\x1a\nlibssh2-org-avatar', img('libssh2'))
+   img('libssh2') == b'\x89PNG\r\n\x1a\nlibssh2-org-avatar', short('libssh2'))
 ok('record: a placeholder an earlier version cached is fetched again, not shown',
-   img('stale') == b'\x00\x00\x01\x00stale-real-favicon', img('stale'))
-ok('record: with no icon anywhere there is no logo (a monogram)', img('nowhere') is None, img('nowhere'))
+   img('stale') == b'\x00\x00\x01\x00stale-real-favicon', short('stale'))
+ok('record: with no icon anywhere there is no logo (a monogram)', img('nowhere') is None, short('nowhere'))
 sys.exit(1 if fails else 0)
 PY
 
