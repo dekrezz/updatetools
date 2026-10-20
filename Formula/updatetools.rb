@@ -10,8 +10,8 @@
 class Updatetools < Formula
   desc "Update everything on your Mac: macOS, App Store, Homebrew and dev tools"
   homepage "https://github.com/dekrezz/updatetools"
-  url "https://github.com/dekrezz/updatetools/archive/refs/tags/2026.10.20.2.tar.gz"
-  sha256 "4a86ef087360309974385171a707c5eca161aa07bd5d701b806b139b886560df"
+  url "https://github.com/dekrezz/updatetools/archive/refs/tags/2026.10.21.1.tar.gz"
+  sha256 "ee17cf4deed7b48d3cf4c1e2b459ec76ab95bf8e31689cef7c56c88949f7ce84"
   license "Apache-2.0"
   head "https://github.com/dekrezz/updatetools.git", branch: "main"
 
