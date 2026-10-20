@@ -316,6 +316,19 @@ const steps = [
 const keys = (st) => sourceRows(st).map(([s]) => s.key).join(',');
 ok('choose lists installed tools, not the report', keys({ phase: 'choose', steps }) === 'homebrew,npm,github');
 ok('run lists selected tools only', keys({ phase: 'run', steps }) === 'homebrew,npm');
+// A tool that is not on this Mac does not appear on the page at all: no
+// notice naming it, no row, no ribbon segment or legend entry, no count.
+const away = [
+  { n: 'Homebrew', key: 'homebrew', s: 'pending', on: true },
+  { n: 'uv', key: 'uv', s: 'pending', on: true, av: false },
+  { n: 'Report', key: 'report', slug: 'report', s: 'pending', on: true },
+];
+const names = (list) => list.map((s) => s.n).join(',');
+ok('the page has no notice naming missing tools', !/Not on this Mac/.test(html) && !/id="absent"/.test(html));
+ok('the chooser does not chart a missing tool', names(stepsForRibbon(away, 'choose', [true, true, true])) === 'Homebrew');
+ok('the chooser does not count a missing tool', selectedCounts(away, 'choose', [true, true, true]).total === 2);
+ok('a missing tool waiting its turn is not listed during the run', keys({ phase: 'run', steps: away }) === 'homebrew');
+ok('a missing tool waiting its turn is not charted during the run', names(stepsForRibbon(away, 'run', null)) === 'Homebrew');
 ok('npm error line is found', errorFrom('npm ERR! code EACCES\nnpm ERR! syscall rename') === 'npm ERR! syscall rename');
 ok('a !! line from the script is a reason', errorFrom('>> rect: running\n!! rect: upgraded, but relaunch failed') === 'rect: upgraded, but relaunch failed');
 ok('a stall banner is a reason', /stalled 600s/.test(errorFrom('working\n######## stalled 600s with no output — killed ########')));
