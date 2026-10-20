@@ -3553,8 +3553,11 @@ try {
   /* A day without a run is a dot on the baseline; a run raises a bar (at
      least the dot's height) to the share of the busiest day it updated. */
   .hist-day{position:relative; flex:1 1 0; min-width:3px; height:100%}
+  /* Capped and centred: where the stacked panel gives a day a wide slot, a
+     mark that filled it would read as a dash and a bar as a lozenge. */
   .hist-day::before,.hist-day i{
     content:""; position:absolute; left:0; right:0; bottom:0; display:block; border-radius:var(--r-pill);
+    max-width:8px; margin-inline:auto;
   }
   .hist-day::before{height:6px; background:var(--seg-empty)}
   .hist-day i{
