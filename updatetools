@@ -3515,6 +3515,184 @@ try {
     .group .row .act{grid-column:3; grid-row:1 / span 2}
     .theme-switch{top:12px; right:12px}
   }
+
+  /* ── history: what earlier runs did, beside this one on wide screens ─────── */
+  /* The main column keeps its width and look; on a wide window it moves left
+     by half the panel so the pair is centred, and the panel takes the right. */
+  .shell{--hist-w:320px; --hist-gap:40px}
+  .hist{min-width:0}
+  html:not([data-phase]) .hist{visibility:hidden; animation:show-anyway 0s 1.5s forwards}
+  /* The panel shows once its first content is in: with the chooser's rise on
+     a page that opens on the choice, a fade otherwise, and never again on Start. */
+  .hist:not(.in){opacity:0}
+  .hist.in{animation:app-in .4s ease-out both}
+  html.chose .hist.in{animation:none}
+  html[data-phase="choose"] .hist.in{animation:rise-in .5s var(--ease-out-expo) .06s backwards}
+  .hist-head{display:flex; align-items:baseline; justify-content:space-between; gap:1rem; margin:0 4px 12px}
+  .hist-head h2,.hist-head h3{margin:0; color:var(--ink)}
+  .hist-head h2{font:450 20px/26px var(--display); letter-spacing:-.05px}
+  .hist-head h3{font:450 15px/21px var(--display); letter-spacing:.11px}
+  .hist-head .count{color:var(--ink-3); font:400 13px/18.2px var(--sans); letter-spacing:.18px; font-variant-numeric:tabular-nums; white-space:nowrap}
+  .hist-block{margin:2rem 0 0}
+  .hist-card{
+    margin:0; padding:20px 24px 22px;
+    background:var(--card); border:1px solid var(--card-bd); border-radius:var(--r-lg);
+  }
+  /* the month at a glance: one figure, the days, three small facts */
+  .hist-big{display:flex; align-items:center; gap:16px; margin:0}
+  .hist-big b{
+    flex:none; color:var(--ink); font:450 42px/1 var(--display); letter-spacing:-.6px;
+    font-variant-numeric:tabular-nums; font-variation-settings:"opsz" 144;
+  }
+  .hist-big span{display:flex; flex-direction:column; gap:2px; min-width:0}
+  .hist-big strong{font:450 15px/21px var(--display); letter-spacing:.11px; color:var(--ink)}
+  .hist-big small{color:var(--ink-3); font:400 13px/18.2px var(--sans); letter-spacing:.18px}
+  .hist-chart{
+    display:flex; align-items:flex-end; gap:3px; height:56px; margin:20px 0 0;
+  }
+  /* A day without a run is a dot on the baseline; a run raises a bar (at
+     least the dot's height) to the share of the busiest day it updated. */
+  .hist-day{position:relative; flex:1 1 0; min-width:3px; height:100%}
+  .hist-day::before,.hist-day i{
+    content:""; position:absolute; left:0; right:0; bottom:0; display:block; border-radius:var(--r-pill);
+  }
+  .hist-day::before{height:6px; background:var(--seg-empty)}
+  .hist-day i{
+    height:var(--h,0); background:var(--seg-done);
+    transition:height .6s var(--ease-out-expo), opacity .15s ease-out;
+  }
+  .hist-day.fail i{background:var(--bad)}
+  /* While a run is on, today's slot is the run's own blue: it lands there. */
+  html[data-phase="run"] .hist-day.today::before{background:var(--run)}
+  .hist-chart:hover .hist-day:not(:hover) i{opacity:.4}
+  .hist-axis{
+    display:flex; justify-content:space-between; gap:1rem; margin:8px 0 0; min-height:16.8px;
+    color:var(--ink-3); font:400 12px/16.8px var(--sans); letter-spacing:.18px; font-variant-numeric:tabular-nums;
+  }
+  .hist-axis .read{color:var(--ink-2)}
+  .hist-figs{
+    display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); margin:18px 0 0; padding:18px 0 0;
+    border-top:1px solid var(--divider);
+  }
+  .hist-figs div{display:flex; flex-direction:column; gap:6px; margin:0; padding:0 0 0 16px; border-left:1px solid var(--line-2); min-width:0}
+  .hist-figs div:first-child{padding-left:0; border-left:0}
+  .hist-figs dd{
+    order:-1; margin:0; color:var(--ink); white-space:nowrap;
+    font:450 22px/1 var(--display); letter-spacing:-.1px; font-variant-numeric:tabular-nums;
+  }
+  .hist-figs dt{margin:0; color:var(--ink-3); font:450 12px/16.8px var(--sans); letter-spacing:.08em; text-transform:uppercase}
+  .hist-msg{margin:0; color:var(--ink-2); font:400 15px/1.5 var(--sans)}
+  .hist-msg + .hist-msg{margin-top:4px; color:var(--ink-3); font-size:13px; line-height:1.55; letter-spacing:.16px}
+  .hist-msg code{font:400 12.5px/1.6 var(--mono); overflow-wrap:anywhere}
+  .hist-chart.ghost{height:6px; margin-top:20px}
+
+  /* lists: static rows with hairlines, run rows that open their record */
+  .hist-list{
+    list-style:none; margin:0; padding:4px 20px;
+    background:var(--card); border:1px solid var(--card-bd); border-radius:var(--r-lg);
+  }
+  .hist-list > li + li{border-top:1px solid var(--divider)}
+  .hist-tool{
+    display:grid; grid-template-columns:32px minmax(0,1fr) auto; align-items:center;
+    column-gap:12px; padding:10px 0; min-height:52px;
+  }
+  .hist-tool .logo{width:32px; height:32px}
+  .hist-tool .logo svg,.hist-tool .logo img{width:18px; height:18px}
+  .hist-tool .logo.app-logo img{width:32px; height:32px}
+  .hist-who{min-width:0}
+  .hist-who b{display:block; color:var(--ink); font:450 15px/21px var(--display); letter-spacing:.11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .hist-who small{display:block; margin-top:1px; color:var(--ink-3); font:400 13px/18.2px var(--sans); letter-spacing:.18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .hist-who small.v{font:400 12.5px/18.2px var(--mono); letter-spacing:0; font-variant-numeric:tabular-nums}
+  .hist-n{color:var(--ink-3); font:400 13px/18.2px var(--sans); letter-spacing:.18px; font-variant-numeric:tabular-nums; white-space:nowrap}
+
+  .hist-runs{list-style:none; margin:0; padding:8px; background:var(--card); border:1px solid var(--card-bd); border-radius:var(--r-lg)}
+  .hist-runs > li + li{margin-top:2px}
+  .hist-runs li.fresh{animation:rise-in .45s var(--ease-out-expo) backwards}
+  .hist-run{
+    appearance:none; width:100%; margin:0; padding:10px 12px 10px 10px; border:0; border-radius:var(--r-md);
+    display:grid; grid-template-columns:32px minmax(0,1fr) auto; grid-template-areas:"mark title took" "mark sum sum";
+    align-items:center; column-gap:12px; row-gap:1px;
+    background:transparent; color:var(--ink); text-align:left; font-family:var(--sans); cursor:pointer;
+    -webkit-tap-highlight-color:transparent; transition:background-color .15s ease-out;
+  }
+  .hist-run:hover{background:var(--hover)}
+  .hist-run:active{background:var(--press)}
+  .hist-run:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  .hist-mark{
+    grid-area:mark; align-self:start; margin-top:2px;
+    width:32px; height:32px; border-radius:50%; display:grid; place-items:center;
+    background:var(--well); color:var(--ok); transition:background-color .15s ease-out;
+  }
+  .hist-run:hover .hist-mark{background:var(--well-2)}
+  .hist-mark svg{width:16px; height:16px; display:block}
+  .hist-mark.fail{color:var(--bad)}
+  .hist-mark.halted{color:var(--ink-3)}
+  .hist-when{
+    grid-area:title; min-width:0; display:flex; align-items:baseline; gap:8px;
+    color:var(--ink); font:450 15px/21px var(--display); letter-spacing:.11px; white-space:nowrap;
+  }
+  .hist-when span{color:var(--ink-3); font:400 13px/18.2px var(--sans); letter-spacing:.18px; font-variant-numeric:tabular-nums}
+  .hist-when .via{display:inline-grid; align-self:center; color:var(--ink-4)}
+  .hist-when .via svg{width:14px; height:14px; display:block}
+  .hist-sum{
+    grid-area:sum; min-width:0; color:var(--ink-3); font:400 13px/18.2px var(--sans); letter-spacing:.18px;
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; overflow-wrap:anywhere;
+  }
+  .hist-sum em{font-style:normal; color:var(--bad-ink)}
+  .hist-sum em.halt{color:var(--ink-2)}
+  .hist-run .took{
+    grid-area:took; justify-self:end;
+    color:var(--ink-3); font:400 13px/18.2px var(--sans); letter-spacing:.18px; font-variant-numeric:tabular-nums; white-space:nowrap;
+  }
+
+  /* typical time per source: name and time, the bar under them */
+  .hist-src{margin:0; padding:14px 20px 16px; background:var(--card); border:1px solid var(--card-bd); border-radius:var(--r-lg)}
+  .hist-src ol{list-style:none; margin:0; padding:0}
+  .hist-src li{
+    display:grid; grid-template-columns:28px minmax(0,1fr) auto; align-items:center;
+    column-gap:12px; row-gap:6px; padding:6px 0;
+  }
+  .hist-src .logo{width:28px; height:28px; grid-row:1 / span 2; align-self:center}
+  .hist-src .logo svg,.hist-src .logo img{width:16px; height:16px}
+  .hist-src .logo.app-logo img{width:28px; height:28px}
+  .hist-src .logo.mono{font-size:11.5px}
+  .hist-src .nm{min-width:0; color:var(--ink-2); font:400 13px/18.2px var(--sans); letter-spacing:.18px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .hist-src .t{color:var(--ink); font:400 13px/18.2px var(--sans); letter-spacing:.18px; font-variant-numeric:tabular-nums; white-space:nowrap}
+  .hist-src .bar{grid-column:2 / -1; height:4px; border-radius:var(--r-pill); background:var(--seg-empty); overflow:hidden}
+  .hist-src .bar i{display:block; height:100%; width:var(--w,0); border-radius:var(--r-pill); background:var(--ink-3)}
+  .hist-src .rest{margin:0; padding:8px 0 0 40px; color:var(--ink-3); font:400 13px/18.2px var(--sans); letter-spacing:.18px}
+
+  /* During a run the panel raises no alarm, so nothing in it competes with the
+     live run: past failures take the panel's own inks until the run is over. */
+  html[data-phase="run"] .hist-day.fail i{background:var(--seg-done)}
+  html[data-phase="run"] .hist-mark.fail{color:var(--ink-3)}
+  html[data-phase="run"] .hist-sum em:not(.halt){color:inherit}
+
+  @media (min-width:1200px){
+    .shell{
+      display:grid; grid-template-columns:calc(720px + 3rem) var(--hist-w); column-gap:var(--hist-gap);
+      justify-content:center; align-items:start;
+    }
+    .hist{padding:5.5rem 0 6rem}
+    /* the ribbon's one gradient still starts where the column's content does */
+    .ribbon:has(.seg):not(:has(.seg:not(.done))) .seg{
+      background-position:calc((100vw - 720px - 3rem - var(--hist-gap) - var(--hist-w)) / 2 + 1.5rem) top;
+    }
+  }
+  @media (max-width:1199px){
+    .hist{max-width:calc(720px + 3rem); margin:0 auto; padding:0 1.5rem 6rem}
+  }
+  @media (max-width:767px){
+    .hist{padding:0 1rem 4rem}
+    .hist-card{padding:18px 18px 20px}
+    .hist-list{padding:4px 16px}
+    .hist-runs{padding:6px}
+    .hist-src{padding:12px 16px 14px}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .hist.in,html[data-phase="choose"] .hist.in,.hist-runs li.fresh{animation:none}
+    .hist-day i{transition:none}
+  }
 </style>
 </head>
 <body>
@@ -3529,6 +3707,7 @@ try {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
     </button>
   </div>
+  <div class="shell">
   <div class="wrap">
     <header class="masthead">
       <h1>updatetools</h1>
@@ -3577,11 +3756,16 @@ try {
     <section class="files" id="files"></section>
     <div class="logbox" id="logbox" hidden><pre id="logtext"></pre></div>
   </div>
+  <aside class="hist" id="hist" aria-labelledby="hist-title" aria-busy="true">
+    <div class="hist-head"><h2 id="hist-title">History</h2></div>
+    <div class="hist-body" id="hist-body"></div>
+  </aside>
+  </div>
   <section class="ledger" id="ledger" role="dialog" aria-modal="true" aria-labelledby="ledger-title" hidden>
     <div class="ledger-top">
       <button type="button" class="ledger-back" id="ledger-back">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5"/><path d="m11 18-6-6 6-6"/></svg>
-        Back to the run
+        <span id="ledger-back-label">Back to the run</span>
       </button>
       <dl class="ledger-facts tally" id="ledger-facts"></dl>
     </div>
@@ -4306,6 +4490,15 @@ WEB_HTML_HEAD
     const link = u.u ? `<small><a href="${escapeHtml(u.u)}" target="_blank" rel="noopener noreferrer">Release notes</a></small>` : '';
     return `<div class="row">${logo(u.slug, u.img, u.n, u.app)}<div class="who"><b>${escapeHtml(u.n)}</b>${link}</div>${versionMarkup(u.o, u.w)}<div class="act">${stagedNote(u)}</div></div>`;
   }
+  // One item of the record, this run's or a past run's from history.json.
+  function ledgerItem(u) {
+    return `
+        <li>
+          ${logo(u.slug, u.img, u.n, u.app)}
+          <span class="name">${escapeHtml(u.n)}${u.u ? `<small><a href="${escapeHtml(u.u)}" target="_blank" rel="noopener noreferrer">Release notes</a></small>` : ''}</span>
+          <span class="ver-cell">${versionMarkup(u.o, u.w)}${stagedNote(u)}</span>
+        </li>`;
+  }
   function paintResult(st, counts) {
     const done = st.phase === 'done';
     $('result').classList.toggle('on', done || st.phase === 'error');
@@ -4337,17 +4530,14 @@ WEB_HTML_HEAD
         ? `<b>${moved}</b><span class="copy"><strong>${label}</strong><small>See old and new versions</small></span>${ICON.arrow}`
         : `<span class="copy"><strong>${label}</strong><small>See the run summary</small></span>${ICON.arrow}`;
     }
+    // A past run's record is open over the page: leave it, and do not open this
+    // run's over it. Closing it paints this run's record back.
+    if (histRecord) { ledgerShown = true; return; }
     // The record covers the run screen, timer included, so it keeps elapsed.
     setTally($('ledger-facts'), [...tallyFacts(counts), [fmt(st.elapsed || 0), 'elapsed', 'elapsed']]);
     $('ledger-title').textContent = counts.fail ? $('headline').textContent : (ups.length ? 'What changed' : 'Nothing changed');
     $('ledger-empty').hidden = ups.length > 0;
-    const list = ups.map((u) => `
-        <li>
-          ${logo(u.slug, u.img, u.n, u.app)}
-          <span class="name">${escapeHtml(u.n)}${u.u ? `<small><a href="${escapeHtml(u.u)}" target="_blank" rel="noopener noreferrer">Release notes</a></small>` : ''}</span>
-          <span class="ver-cell">${versionMarkup(u.o, u.w)}${stagedNote(u)}</span>
-        </li>`).join('');
-    setHtml($('ledger-list'), list);
+    setHtml($('ledger-list'), ups.map((u) => ledgerItem(u)).join(''));
     // A clean run ends on the record. A run with failures ends here, on the
     // reasons, instead of covering them with a list of successes.
     if (!ledgerShown && !(st.steps || []).some((s) => s.s === 'fail')) { ledgerShown = true; openLedger(); }
@@ -4719,6 +4909,7 @@ WEB_HTML_HEAD
     const el = $('ledger');
     ledgerReturn = document.activeElement;
     document.querySelector('.wrap').inert = true;
+    $('hist').inert = true;
     el.hidden = false;
     $('ledger-back').focus({ preventScroll: true });
     el.classList.remove('hide', 'show');
@@ -4729,13 +4920,18 @@ WEB_HTML_HEAD
     const el = $('ledger');
     if (el.hidden || el.classList.contains('hide')) return;
     document.querySelector('.wrap').inert = false;
+    $('hist').inert = false;
+    // A past run's row may have been rebuilt by a refetch while its record was open.
+    const row = histRecord && $('hist-body').querySelector(`.hist-run[data-id="${CSS.escape(histRecord)}"]`);
     if (ledgerReturn && ledgerReturn.isConnected) ledgerReturn.focus({ preventScroll: true });
+    else if (row) row.focus({ preventScroll: true });
     else $('open-ledger').focus({ preventScroll: true });
     el.classList.add('hide');
     el.classList.remove('show');
     if (reduce) {
       el.hidden = true;
       el.classList.remove('hide');
+      histCloseRecord();
     }
   }
 
@@ -4874,6 +5070,7 @@ WEB_HTML_HEAD
     chalClear();
     pwReturn = document.activeElement;
     document.querySelector('.wrap').inert = true;
+    $('hist').inert = true;
     scrim.classList.add('on');
     setTimeout(() => { setEditable(true); chalInput.focus(); placeCaretEnd(); }, 50);
   }
@@ -4881,6 +5078,7 @@ WEB_HTML_HEAD
     asking = false;
     scrim.classList.remove('on');
     document.querySelector('.wrap').inert = !$('ledger').hidden;
+    $('hist').inert = !$('ledger').hidden;
     if (pwReturn && pwReturn.isConnected) pwReturn.focus({ preventScroll: true });
     chalClear();
     setEditable(false);
@@ -5141,12 +5339,14 @@ WEB_HTML_HEAD
     if (!el.classList.contains('hide')) return;
     el.hidden = true;
     el.classList.remove('hide');
+    histCloseRecord();
   });
   document.addEventListener('keydown', (e) => {
     if (asking) return;
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      if (latestPhase === 'choose') startRun();
+      // A past run's record can be open over the chooser; it must not start a run.
+      if (latestPhase === 'choose' && $('ledger').hidden) startRun();
       return;
     }
     if (e.key === 'Escape' && !$('ledger').hidden) closeLedger();
@@ -5167,6 +5367,7 @@ WEB_HTML_HEAD
       const st = await r.json();
       misses = 0;
       render(st);
+      histTick(st);
       renderFiles(st);
       if (freshPrompt(st, answeredAsk)) {
         askPassword(st.prompt, st.ask);
@@ -5188,6 +5389,316 @@ WEB_HTML_HEAD
     }
     setTimeout(poll, 400);
   }
+
+  /* ── history: what earlier runs did, read from history.json ─────────────── */
+  // Everything here is computed from the file: the last 30 local calendar
+  // days for the figures and the chart, the whole file for the tools that
+  // move most, the last ten runs of each source for its usual time.
+  const HIST_DAYS = 30, HIST_TOOLS = 5, HIST_RUNS = 5, HIST_SOURCES = 5, HIST_SRC_RUNS = 10;
+  const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const WEEKDAY = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const HALT = { network: 'Stopped: network lost', signal: 'Stopped from the terminal', killed: 'The run was killed' };
+  const HIST_ICON = {
+    ok: ICON.done, fail: ICON.fail,
+    halted: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 7.5v9M15 7.5v9"/></svg>',
+    plain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7 5 5-5 5"/><path d="M12 17h7"/></svg>',
+  };
+  const HIST_MISSING = '<p class="note-p">This run is not in history.json yet.</p>';
+  let hist = null, histErr = '', histBusy = false, histPainted = false;
+  // Once this run's record is in the file, state.json names it as
+  // "hist":{"id","rev"}; rev grows each time a retry rewrites the record. The
+  // file is read at load, then once more for each pair not read yet.
+  let histAsked = '';                 // the pair the latest read was started for
+  let histFor = '';                   // the pair the file in hand was read for
+  let histFresh = '';                 // a run that entered the file while this page was open
+  let histRecord = '';                // id of the past run whose record is open
+  let histDaysShown = null;           // the chart's days, for the hover read-out
+
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const hhmm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const monthDay = (d) => `${MONTH[d.getMonth()]} ${d.getDate()}`;
+  // Local midnight n days ago, built from date parts so a DST change cannot shift it.
+  const dayBack = (n) => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), now.getDate() - n); };
+  const histPair = (st) => (st && st.hist && st.hist.id ? `${st.hist.id} ${st.hist.rev}` : '');
+  function daysAgo(d) {
+    return Math.round((dayBack(0) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5);
+  }
+  function dayName(d) {
+    const n = daysAgo(d);
+    return n === 0 ? 'Today' : n === 1 ? 'Yesterday' : n > 0 && n < 7 ? WEEKDAY[d.getDay()] : monthDay(d);
+  }
+  // Run lengths: seconds as the legend writes them under ten minutes, whole
+  // minutes up to an hour, then hours and minutes, so a figure keeps its width.
+  function histDur(sec) {
+    sec = Math.round(sec || 0);
+    if (sec < 600) return fmtShort(sec);
+    if (sec < 3600) return `${Math.round(sec / 60)} min`;
+    return `${Math.floor(sec / 3600)}h ${pad2(Math.round((sec % 3600) / 60))}m`;
+  }
+  function median(xs) {
+    if (!xs.length) return null;
+    const s = xs.slice().sort((a, b) => a - b), m = s.length >> 1;
+    return Math.round(s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2);
+  }
+
+  // Logos come with the data (Bash's ut_icon_slug wrote each slug). A source
+  // still on this dashboard shows exactly the logo of its row.
+  function sourceLogo(k, n, slug) {
+    const live = latestState && (latestState.steps || []).find((x) => x.key === k);
+    return live ? logo(live.slug, live.img, live.n) : logo(slug || '', '', n);
+  }
+  const toolLogo = (u) => logo(u.slug || '', '', u.n);
+
+  async function loadHistory(want) {
+    const pair = histPair({ hist: want });
+    histBusy = true;
+    histAsked = pair;
+    let err = '', data = null;
+    try {
+      const r = await fetch('history.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) err = `history.json: ${r.status} ${r.statusText}`.trim();
+      else {
+        try { data = await r.json(); } catch { err = 'history.json is not valid JSON'; }
+      }
+    } catch (e) { err = `history.json could not be read: ${e.message}`; }
+    histBusy = false;
+    // The server could not read its own file and says why (a line that is not a run record, …).
+    if (!err && data && data.v === 1 && data.error) err = String(data.error);
+    else if (!err && (!data || data.v !== 1 || !Array.isArray(data.runs))) {
+      err = `history.json has an unknown format${data && data.v != null ? ` (v${data.v})` : ''}`;
+    }
+    histErr = err;
+    histFor = pair;
+    if (err) hist = null;
+    else {
+      const has = (doc) => !!doc && doc.runs.some((r) => r.id === want.id);
+      if (want && hist && !has(hist) && has(data)) histFresh = want.id;
+      hist = data;
+    }
+    paintHistory();
+  }
+  // Called with every state.json, right after render.
+  function histTick(st) {
+    const pair = histPair(st);
+    if (pair && pair !== histAsked && !histBusy) loadHistory(st.hist);
+    paintHistory();
+  }
+
+  function histWindow(runs) {
+    const from = dayBack(HIST_DAYS - 1).getTime();
+    return runs.filter((r) => r.at * 1000 >= from);
+  }
+  function histDays(win) {
+    const days = [];
+    for (let i = HIST_DAYS - 1; i >= 0; i--) {
+      const d = dayBack(i);
+      days.push({ d, key: dayKey(d), runs: 0, ups: 0, fail: 0 });
+    }
+    const byKey = new Map(days.map((x) => [x.key, x]));
+    win.forEach((r) => {
+      const x = byKey.get(dayKey(new Date(r.at * 1000)));
+      if (!x) return;
+      x.runs++; x.ups += (r.up || []).length;
+      if (r.out === 'fail') x.fail++;
+    });
+    return days;
+  }
+  function dayLine(x) {
+    const when = daysAgo(x.d) === 0 ? 'Today' : monthDay(x.d);
+    if (!x.runs) return `${when}: no run`;
+    const what = x.ups ? plural(x.ups, 'update', 'updates') : 'nothing to update';
+    return `${when}: ${what}${x.runs > 1 ? `, ${x.runs} runs` : ''}${x.fail ? `, ${x.fail} failed` : ''}`;
+  }
+  function overviewCard(runs) {
+    const win = histWindow(runs);
+    const days = histDays(win);
+    const ups = win.reduce((n, r) => n + (r.up || []).length, 0);
+    const clean = win.filter((r) => r.out === 'ok').length;
+    // A stopped run's length is where it was cut off, not how long a run takes.
+    const finished = win.filter((r) => r.out !== 'halted').map((r) => r.sec);
+    const typical = median(finished);
+    // At least 4, so a quiet month does not draw a one-update day as a full bar.
+    const top = Math.max(4, ...days.map((x) => x.ups));
+    const bars = days.map((x, i) => {
+      const h = x.runs ? Math.max(6 / 56, x.ups / top) : 0;
+      return `<span class="hist-day${x.fail ? ' fail' : ''}${i === HIST_DAYS - 1 ? ' today' : ''}" data-i="${i}" style="--h:${(h * 100).toFixed(1)}%"><i></i></span>`;
+    }).join('');
+    const busiest = days.reduce((a, x) => (x.ups > a.ups ? x : a), days[0]);
+    const label = `Updates per day over the last ${HIST_DAYS} days: ${plural(ups, 'update', 'updates')} in ${plural(win.length, 'run', 'runs')}`
+      + (busiest.ups ? `, most on ${monthDay(busiest.d)} with ${busiest.ups}` : '') + '.';
+    const head = win.length
+      ? `<p class="hist-big"><b>${ups}</b><span><strong>${ups === 1 ? 'update installed' : 'updates installed'}</strong><small>in the last ${HIST_DAYS} days</small></span></p>`
+      : `<p class="hist-msg">No runs in the last ${HIST_DAYS} days.</p><p class="hist-msg">The last one was on ${monthDay(new Date(runs[0].at * 1000))}.</p>`;
+    const pct = Math.floor((100 * clean) / Math.max(1, win.length));
+    const figs = win.length ? `<dl class="hist-figs">
+        <div title="Runs started in the last ${HIST_DAYS} days"><dt>runs</dt><dd>${win.length}</dd></div>
+        <div title="${clean} of ${win.length} finished with nothing failed or stopped"><dt>clean</dt><dd>${pct}%<span class="sr">, ${clean} of ${win.length}</span></dd></div>
+        <div title="${typical == null ? 'Every run was stopped' : `The middle length of the ${plural(finished.length, 'run', 'runs')} that were not stopped`}"><dt>per run</dt><dd>${typical == null ? '–' : histDur(typical)}<span class="sr">, typically</span></dd></div>
+      </dl>` : '';
+    return { days, html: `<div class="hist-card">${head}
+        <div class="hist-chart" id="hist-chart" role="img" aria-label="${escapeHtml(label)}">${bars}</div>
+        <div class="hist-axis" id="hist-axis" aria-hidden="true"><span>${monthDay(days[0].d)}</span><span>Today</span></div>
+        ${figs}</div>` };
+  }
+  function toolsBlock(runs) {
+    const by = new Map();
+    runs.forEach((r) => (r.up || []).forEach((u) => {
+      const t = by.get(u.k);
+      if (t) { t.count++; return; }
+      by.set(u.k, { u, count: 1, at: r.at });        // newest first: the first seen is the latest
+    }));
+    const top = Array.from(by.values()).filter((t) => t.count > 1)
+      .sort((a, b) => b.count - a.count || b.at - a.at).slice(0, HIST_TOOLS);
+    if (!top.length) return '';
+    const since = monthDay(new Date(runs[runs.length - 1].at * 1000));
+    const rows = top.map(({ u, count, at }) => `<li class="hist-tool">${toolLogo(u)}
+        <span class="hist-who"><b>${escapeHtml(u.n)}</b><small class="v" title="${escapeHtml(u.w)}, ${escapeHtml(monthDay(new Date(at * 1000)))}">${escapeHtml(u.w)}</small></span>
+        <span class="hist-n" aria-label="${plural(count, 'update', 'updates')}">${count}×</span></li>`).join('');
+    return `<section class="hist-block" aria-labelledby="hist-tools-h"><div class="hist-head"><h3 id="hist-tools-h">Updated most often</h3><span class="count">since ${since}</span></div>
+      <ol class="hist-list">${rows}</ol></section>`;
+  }
+  // A step stopped by a halt did not fail: the halt says why the run ended.
+  function runSummary(r) {
+    const ups = r.up || [];
+    const failed = (r.steps || []).filter((s) => s.s === 'fail').map((s) => s.n);
+    const bits = [];
+    if (r.out === 'halted') bits.push(`<em class="halt">${HALT[r.halt] || 'Stopped'}</em>`);
+    if (failed.length) {
+      const who = failed.length === 1 ? failed[0] : failed.length === 2 ? `${failed[0]} and ${failed[1]}` : `${failed[0]} and ${failed.length - 1} more`;
+      bits.push(`<em>${escapeHtml(who)} failed</em>`);
+    }
+    if (ups.length) bits.push(`${ups.length} updated: ${ups.map((u) => escapeHtml(u.n)).join(', ')}`);
+    else if (!bits.length) bits.push('Everything was up to date');
+    return bits.join(' · ');
+  }
+  function runsBlock(runs, thisId, missing) {
+    const rows = runs.slice(0, HIST_RUNS).map((r) => {
+      const d = new Date(r.at * 1000);
+      const kind = r.out === 'ok' ? 'ok' : r.out === 'fail' ? 'fail' : 'halted';
+      const word = kind === 'ok' ? 'finished' : kind === 'fail' ? 'had a failure' : 'was stopped';
+      const mine = r.id === thisId;
+      const via = r.mode === 'plain' ? `<span class="via" title="Ran without the dashboard: on a schedule or with --plain">${HIST_ICON.plain}<span class="sr">, without the dashboard</span></span>` : '';
+      return `<li${mine ? ` class="this${r.id === histFresh ? ' fresh' : ''}"` : ''}><button type="button" class="hist-run" data-id="${escapeHtml(r.id)}" aria-haspopup="dialog">
+          <span class="hist-mark ${kind}" aria-hidden="true">${HIST_ICON[kind]}</span>
+          <span class="hist-when">${mine ? 'This run' : dayName(d)}<span>${hhmm(d)}</span>${via}<span class="sr">, ${word}</span></span>
+          <span class="took"><span class="sr">took </span>${histDur(r.sec)}</span>
+          <span class="hist-sum">${runSummary(r)}</span></button></li>`;
+    }).join('');
+    return `<section class="hist-block" aria-labelledby="hist-runs-h"><div class="hist-head"><h3 id="hist-runs-h">Latest runs</h3><span class="count">${runs.length} recorded</span></div>
+      <ol class="hist-runs">${rows}</ol>${missing ? HIST_MISSING : ''}</section>`;
+  }
+  function sourcesBlock(runs) {
+    const by = new Map();
+    runs.forEach((r) => (r.steps || []).forEach((s) => {
+      // A failed or stopped step's time says nothing about a normal run.
+      if (s.s !== 'done' && s.s !== 'staged') return;
+      if (!by.has(s.k)) by.set(s.k, { k: s.k, n: s.n, slug: s.slug, ts: [] });
+      const x = by.get(s.k);
+      if (x.ts.length < HIST_SRC_RUNS) x.ts.push(s.t);
+    }));
+    const all = Array.from(by.values()).map((x) => ({ ...x, t: median(x.ts) }))
+      .sort((a, b) => b.t - a.t || a.n.localeCompare(b.n));
+    if (!all.length) return '';
+    const top = all.slice(0, HIST_SOURCES), rest = all.slice(HIST_SOURCES);
+    const max = Math.max(1, top[0].t);
+    const rows = top.map((x) => `<li>${sourceLogo(x.k, x.n, x.slug)}<span class="nm">${escapeHtml(x.n)}</span><span class="t">${fmtShort(x.t)}</span>
+        <span class="bar" aria-hidden="true"><i style="--w:${Math.max(2, (100 * x.t) / max).toFixed(1)}%"></i></span></li>`).join('');
+    const under = rest.length ? Math.ceil((Math.max(...rest.map((x) => x.t)) + 1) / 5) * 5 : 0;
+    const more = rest.length ? `<p class="rest">${plural(rest.length, 'more source', 'more sources')}, each under ${fmtShort(under)}</p>` : '';
+    return `<section class="hist-block" aria-labelledby="hist-src-h"><div class="hist-head"><h3 id="hist-src-h">Usual time per source</h3><span class="count">last ${HIST_SRC_RUNS} runs</span></div>
+      <div class="hist-src"><ol>${rows}</ol>${more}</div></section>`;
+  }
+  function emptyHistory(missing) {
+    const live = latestState.phase === 'run' || latestState.phase === 'done';
+    return `<div class="hist-card"><p class="hist-msg">No runs recorded yet.</p>
+        <p class="hist-msg">${live ? 'This run is the first. It appears here when it finishes.'
+          : 'Each run is recorded here when it finishes: what it updated and how long it took.'}</p>
+        <div class="hist-chart ghost" aria-hidden="true">${'<span class="hist-day"><i></i></span>'.repeat(HIST_DAYS)}</div>
+        <div class="hist-axis" aria-hidden="true"><span>${monthDay(dayBack(HIST_DAYS - 1))}</span><span>Today</span></div></div>${missing ? HIST_MISSING : ''}`;
+  }
+  const histUnavailable = (why) => `<div class="hist-card"><p class="hist-msg">History is unavailable.</p><p class="hist-msg"><code>${escapeHtml(why)}</code></p></div>`;
+
+  function paintHistory() {
+    const aside = $('hist'), body = $('hist-body');
+    let html = '', days = null;
+    if (histErr) html = histUnavailable(histErr);
+    else if (!hist || !latestState) return;       // painted again once both are in
+    else {
+      // A record the page renders badly must not stop the poll that drives the run.
+      try {
+        const thisId = latestState.hist ? latestState.hist.id : '';
+        // Read for this very pair and still without the run: say so, no retry.
+        const missing = histFor !== '' && histFor === histPair(latestState) && !hist.runs.some((r) => r.id === thisId);
+        if (!hist.runs.length) html = emptyHistory(missing);
+        else {
+          const over = overviewCard(hist.runs);
+          days = over.days;
+          html = over.html + toolsBlock(hist.runs) + runsBlock(hist.runs, thisId, missing) + sourcesBlock(hist.runs);
+        }
+      } catch (e) {
+        console.error('updatetools: the history panel could not be drawn', e);
+        html = histUnavailable(`history.json could not be shown: ${e.message}`);
+        days = null;
+      }
+    }
+    const was = body.querySelector('.hist-day.today');
+    const from = was ? was.style.getPropertyValue('--h') : '';
+    if (!setHtml(body, html)) return;
+    histDaysShown = days;
+    if (!histPainted) { histPainted = true; aside.removeAttribute('aria-busy'); aside.classList.add('in'); return; }
+    // A run that lands in today's slot grows its bar from where today stood.
+    const bar = body.querySelector('.hist-day.today i');
+    const to = bar ? bar.parentElement.style.getPropertyValue('--h') : '';
+    if (reduce || !from || !to || from === to) return;
+    bar.style.height = from;
+    requestAnimationFrame(() => requestAnimationFrame(() => { bar.style.height = to; }));
+  }
+
+  // Hovering the chart reads one day out in the line under it.
+  $('hist-body').addEventListener('pointerover', (e) => {
+    const day = e.target.closest('.hist-day[data-i]');
+    const axis = $('hist-axis');
+    if (!day || !axis || !histDaysShown) return;
+    axis.innerHTML = `<span class="read">${escapeHtml(dayLine(histDaysShown[Number(day.dataset.i)]))}</span>`;
+  });
+  $('hist-body').addEventListener('pointerout', (e) => {
+    const chart = e.target.closest('.hist-chart');
+    if (!chart || chart.contains(e.relatedTarget) || !histDaysShown) return;
+    $('hist-axis').innerHTML = `<span>${monthDay(histDaysShown[0].d)}</span><span>Today</span>`;
+  });
+  // A past run opens in the record, the same view this run ends on.
+  $('hist-body').addEventListener('click', (e) => {
+    const b = e.target.closest('.hist-run');
+    const r = b && hist && hist.runs.find((x) => x.id === b.dataset.id);
+    if (r) histOpenRecord(r);
+  });
+  function histOpenRecord(r) {
+    histRecord = r.id;
+    // Stopped steps count as neither done nor failed: the title says the run was stopped.
+    const steps = r.steps || [];
+    const count = (s) => steps.filter((x) => x.s === s).length;
+    setTally($('ledger-facts'), [...tallyFacts({ done: count('done'), staged: count('staged'), skip: 0, fail: count('fail') }),
+      [fmt(r.sec), 'elapsed', 'elapsed']]);
+    const d = new Date(r.at * 1000);
+    const when = `${WEEKDAY[d.getDay()].slice(0, 3)}, ${monthDay(d)}`;
+    const ups = r.up || [];
+    $('ledger-title').textContent = r.out === 'halted' ? `${HALT[r.halt] || 'Stopped'} on ${when}`
+      : ups.length ? `What changed on ${when}` : `Nothing changed on ${when}`;
+    setHtml($('ledger-list'), ups.map((u) => ledgerItem(u)).join(''));
+    $('ledger-empty').hidden = ups.length > 0;
+    $('ledger-back-label').textContent = 'Back';
+    openLedger();
+  }
+  // Once a past run's record has faded out, this run's own record is painted
+  // back into it.
+  function histCloseRecord() {
+    if (!histRecord) return;
+    histRecord = '';
+    $('ledger-back-label').textContent = 'Back to the run';
+    if (latestState) render(latestState);
+  }
+  loadHistory(null);
   poll();
 })();
 </script>
