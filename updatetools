@@ -5430,11 +5430,14 @@ WEB_HTML_HEAD
   }
   // Run lengths: seconds as the legend writes them under ten minutes, whole
   // minutes up to an hour, then hours and minutes, so a figure keeps its width.
+  // Whole minutes are taken before the hours are split off, so 1h 59m 30s
+  // carries to "2h 00m" instead of reading "1h 60m".
   function histDur(sec) {
     sec = Math.round(sec || 0);
     if (sec < 600) return fmtShort(sec);
-    if (sec < 3600) return `${Math.round(sec / 60)} min`;
-    return `${Math.floor(sec / 3600)}h ${pad2(Math.round((sec % 3600) / 60))}m`;
+    const min = Math.round(sec / 60);
+    if (sec < 3600) return `${min} min`;
+    return `${Math.floor(min / 60)}h ${pad2(min % 60)}m`;
   }
   function median(xs) {
     if (!xs.length) return null;
