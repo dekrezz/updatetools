@@ -41,6 +41,9 @@ assert_not_contains() {
 assert_eq "--yes starts without the chooser" "1" "$AUTO_START"
 
 export HOME="$tmp/home"
+DIAG_DIR="$tmp/diag"
+# The network watch has its own test; this one must not reach the network.
+NET_TIMEOUT=0
 APPS="$HOME/Applications"
 mkdir -p "$APPS"
 UT_TERM_BID="com.apple.Terminal"

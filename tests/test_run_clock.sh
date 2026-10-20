@@ -28,6 +28,8 @@ pass() { printf 'ok - %s\n' "$1"; }
 fail() { printf 'not ok - %s\n' "$1"; failures=$((failures + 1)); }
 
 PROMPT_TIMEOUT=20
+# The network watch has its own test; this one must not reach the network.
+NET_TIMEOUT=0
 clock_log=""
 
 # Every state.json the run writes, as the page's clock shows it: 00:00 on the

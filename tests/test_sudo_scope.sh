@@ -57,6 +57,8 @@ for ((i=0;i<TOTAL;i++)); do
   STEP_KEY[i]="$(ut_step_key "${STEPS[i]%%¦*}")"; STEP_ON[i]=1; STATUS[i]=pending; STEP_WHY[i]=""
 done
 STALL_TIMEOUT=0
+# The network watch has its own test; this one must not reach the network.
+NET_TIMEOUT=0
 WEB_DIR=""
 
 set_on() {  # set_on key... — enable exactly these keys
