@@ -5439,7 +5439,7 @@ WEB_HTML_HEAD
     sec = Math.round(sec || 0);
     if (sec < 600) return fmtShort(sec);
     const min = Math.round(sec / 60);
-    if (sec < 3600) return `${min} min`;
+    if (min < 60) return `${min} min`;
     return `${Math.floor(min / 60)}h ${pad2(min % 60)}m`;
   }
   function median(xs) {
@@ -5612,7 +5612,8 @@ WEB_HTML_HEAD
         <span class="bar" aria-hidden="true"><i style="--w:${Math.max(2, (100 * x.t) / max).toFixed(1)}%"></i></span></li>`).join('');
     const under = rest.length ? Math.ceil((Math.max(...rest.map((x) => x.t)) + 1) / 5) * 5 : 0;
     const more = rest.length ? `<p class="rest">${plural(rest.length, 'more source', 'more sources')}, each under ${fmtShort(under)}</p>` : '';
-    return `<section class="hist-block" aria-labelledby="hist-src-h"><div class="hist-head"><h3 id="hist-src-h">Usual time per source</h3><span class="count">last ${HIST_SRC_RUNS} runs</span></div>
+    const n = Math.min(HIST_SRC_RUNS, runs.length);
+    return `<section class="hist-block" aria-labelledby="hist-src-h"><div class="hist-head"><h3 id="hist-src-h">Usual time per source</h3><span class="count">${n === 1 ? 'last run' : `last ${n} runs`}</span></div>
       <div class="hist-src"><ol>${rows}</ol>${more}</div></section>`;
   }
   function emptyHistory(missing) {
@@ -5623,7 +5624,7 @@ WEB_HTML_HEAD
         <div class="hist-chart ghost" aria-hidden="true">${'<span class="hist-day"><i></i></span>'.repeat(HIST_DAYS)}</div>
         <div class="hist-axis" aria-hidden="true"><span>${monthDay(dayBack(HIST_DAYS - 1))}</span><span>Today</span></div></div>${missing ? HIST_MISSING : ''}`;
   }
-  const histUnavailable = (why) => `<div class="hist-card"><p class="hist-msg">History is unavailable.</p><p class="hist-msg"><code>${escapeHtml(why)}</code></p></div>`;
+  const histUnavailable = (why) => `<div class="hist-card"><p class="hist-msg">History is unavailable.</p><p class="hist-msg"><code>${escapeHtml(why).replace(/\//g, '/<wbr>')}</code></p></div>`;
 
   function paintHistory() {
     const aside = $('hist'), body = $('hist-body');
