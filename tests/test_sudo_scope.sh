@@ -6,7 +6,6 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d /tmp/updatetools-sudo.XXXXXX)"
-trap 'rm -rf "$tmp"' EXIT
 
 export HOME="$tmp/home"
 export UPDATETOOLS_ENABLED_FILE="$tmp/enabled"
@@ -14,6 +13,8 @@ export UPDATETOOLS_LIB_ONLY=1
 mkdir -p "$HOME"
 # shellcheck source=../updatetools
 source "$ROOT/updatetools"
+# Sourcing sets updatetools' own EXIT trap (cleanup); keep it and remove $tmp too.
+trap 'cleanup; rm -rf "$tmp"' EXIT
 
 failures=0
 pass() { printf 'ok - %s\n' "$1"; }

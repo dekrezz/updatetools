@@ -10,13 +10,14 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d /tmp/updatetools-haltpage.XXXXXX)"
-trap 'rm -rf "$tmp"' EXIT
 export HOME="$tmp/home"
 mkdir -p "$HOME"
 
 export UPDATETOOLS_LIB_ONLY=1
 # shellcheck source=../updatetools
 source "$ROOT/updatetools"
+# Sourcing sets updatetools' own EXIT trap (cleanup); keep it and remove $tmp too.
+trap 'cleanup; rm -rf "$tmp"' EXIT
 
 ut_web_page > "$tmp/page.html"
 node - "$tmp/page.html" <<'NODE'
