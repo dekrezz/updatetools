@@ -267,8 +267,9 @@ the app is running: brew only re-syncs its own record.
 
 Every run diffs versions from before and after, and shows what actually changed
 — with each tool's logo (bundled [Simple Icons](https://simpleicons.org), CC0,
-falling back to the project's own site icon, cached under
-`~/.cache/updatetools/icons`) and the vendor's spelling from Homebrew's metadata,
+falling back to the project's own site icon, its parent domain's, or its
+GitHub organization's avatar, cached under `~/.cache/updatetools/icons`; never
+the icon service's grey placeholder) and the vendor's spelling from Homebrew's metadata,
 so it reads `ChatGPT`, not `chatgpt`. Staged cask upgrades (installed, but the running
 process is still on the old build) stay in that list with an **i** mark next to
 the version; hover or focus it to see that the change applies on next launch. `--debug` also writes the
@@ -349,7 +350,10 @@ a scheduled run). The record says when its steps started, how long it took and
 how it ended: finished, with a failed step, or stopped and why (network lost,
 or Ctrl+C / `kill` / a closed terminal). It lists each step that ran with its
 outcome and time, and each update the report found, with the old and new
-version and the release-notes link. A **Retry failed** or **Continue** round
+version, the release-notes link and its logo, as in the run's own record: the
+app's own icon the plan showed (kept under `~/.cache/updatetools/icons/kept`
+when the run is recorded), else its Simple Icons mark or the site icon already
+in the cache. Showing the history fetches nothing. A **Retry failed** or **Continue** round
 rewrites the same run's record instead of adding one.
 
 The records are JSON lines in `~/.config/updatetools/history`, oldest first.
