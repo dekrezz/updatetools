@@ -11,9 +11,8 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d /tmp/updatetools-intr.XXXXXX)"
-export HOME="$tmp/home" HOMEBREW_CACHE="$tmp/brew-cache"
-mkdir -p "$HOME"
-dead_log=""
+export HOME="$tmp/home" TMPDIR="$tmp/scratch" HOMEBREW_CACHE="$tmp/brew-cache"
+mkdir -p "$HOME" "$TMPDIR"
 
 export UPDATETOOLS_LIB_ONLY=1
 # shellcheck source=../updatetools
@@ -22,7 +21,6 @@ finish() {
   local f
   for f in "$tmp"/*/*.child; do [ -f "$f" ] && kill -KILL "$(cat "$f")" 2>/dev/null; done
   pkill -KILL -f "$tmp/" 2>/dev/null
-  [ -n "$dead_log" ] && rm -f "$dead_log"
   rm -rf "$tmp"
 }
 trap finish EXIT

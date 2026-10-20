@@ -8,8 +8,8 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 tmp="$(mktemp -d /tmp/updatetools-stop.XXXXXX)"
-export HOME="$tmp/home" HOMEBREW_CACHE="$tmp/brew-cache"
-mkdir -p "$HOME"
+export HOME="$tmp/home" TMPDIR="$tmp/scratch" HOMEBREW_CACHE="$tmp/brew-cache"
+mkdir -p "$HOME" "$TMPDIR"
 
 export UPDATETOOLS_LIB_ONLY=1
 # shellcheck source=../updatetools
