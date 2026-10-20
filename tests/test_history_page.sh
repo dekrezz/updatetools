@@ -8,6 +8,8 @@
 #     - clean: floor(100 * ok runs / runs);
 #     - per run: the median length of the runs that were not stopped;
 #     - a run older than that is not counted;
+#   * a run length from an hour up reads "{h}h {mm}m" with whole minutes, so
+#     1h 59m 30s reads "2h 00m", never "1h 60m";
 #   * a chart of those 30 days, today last. Each day has its updates, runs and
 #     failed runs. A day without a run is empty;
 #   * "Updated most often", over the whole file: tools updated at least twice,
@@ -275,6 +277,8 @@ const MAIN = [
     eq('runs counts the runs of the last 30 local days, not one more', fig(h, 'runs'), '6');
     eq('clean is floor(100 * ok / runs): 4 of 6 is 66%', fig(h, 'clean'), '66%');
     eq('per run is the median length of the runs that were not stopped', fig(h, 'per run'), '3m 20s');
+    eq('a run of an hour or more reads hours and whole minutes, never 60 minutes',
+      [3600, 3725, 7170, 7199].map(p.need('histDur')), ['1h 00m', '1h 02m', '2h 00m', '2h 00m']);
     const inWin = p.need('histWindow')(MAIN).map((r) => r.id);
     eq('the window starts at local midnight 29 days ago and drops older runs', inWin,
       ['r-today', 'r-today-fail', 'r-yesterday', 'r-halted', 'r-10', 'r-29']);
