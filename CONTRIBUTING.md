@@ -44,6 +44,7 @@ a pull request without requesting permission.
    bash tests/test_quiet_page.sh
    bash tests/test_npm_globals.sh
    bash tests/test_history_logos.sh
+   bash tests/test_site_icons.sh
    ```
 
 6. Open a pull request with a clear description of the problem, the solution,
