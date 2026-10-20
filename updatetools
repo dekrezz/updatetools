@@ -3123,9 +3123,6 @@ try {
   .tail.tail-out{animation:tail-out .45s var(--ease-out-expo) forwards}
   @keyframes tail-out{to{height:0; padding-top:0; opacity:0}}
   .tail.fade{opacity:.22}
-  .absent{margin:1rem 0 0; color:var(--ink-3); font:400 13px/18.2px var(--sans); letter-spacing:.18px}
-  .absent[hidden]{display:none}
-  .absent b{color:var(--ink-2); font-weight:500}
 
   /* chips: a word in a pill, colour only when it means something */
   .chip{
@@ -3573,7 +3570,6 @@ try {
       <div class="group" id="result-empty" hidden><div class="empty-row">No step ran. Your apps and tools are exactly as they were.</div></div>
     </section>
     <section class="steps" id="steps" role="list" aria-label="Sources"></section>
-    <p class="absent" id="absent" hidden></p>
     <section class="plan" id="plan" aria-label="What will update"></section>
 
     <section class="files" id="files"></section>
@@ -3753,7 +3749,9 @@ WEB_HTML_HEAD
 
   /* ── which steps a view shows ───────────────────────────────────────────── */
   // During choose the local toggles win; after Start the server's verdict does.
+  // A tool that is not on this Mac is never shown; its saved toggle is kept.
   function stepSelected(s, i, phase, localOn) {
+    if (s.av === false) return false;
     if (phase === 'choose') {
       return localOn ? !!localOn[i] : s.on !== false;
     }
@@ -3813,13 +3811,13 @@ WEB_HTML_HEAD
   }
 
   // Rows the source list shows: the report step is plumbing, tools that are
-  // not on this Mac are named once below the list instead of taking a row each.
+  // not on this Mac are left out.
   function sourceRows(st) {
     const out = [];
     (st.steps || []).forEach((s, i) => {
       if (s.slug === 'report' || s.key === 'report') return;
       if (st.phase === 'choose') { if (s.av !== false) out.push([s, i]); return; }
-      if (stepSelected(s, i, st.phase, null) && !(s.s === 'skip' && s.why === 'guard' && s.av === false)) out.push([s, i]);
+      if (stepSelected(s, i, st.phase, null)) out.push([s, i]);
     });
     return out;
   }
@@ -4109,7 +4107,7 @@ WEB_HTML_HEAD
       why, s.img ? s.img.length : 0, s.s === 'run' ? '' : sideNote(s, st)].join('|');
   }
   // Rows are matched to steps by key, not by position: a row that leaves the
-  // list (a tool found missing mid-run, a retry round ending) must not shift
+  // list (a step left off at Start, a retry round ending) must not shift
   // its neighbours' open log, focus or output line onto another step.
   let refocusing = false;
   function paintList(st) {
@@ -4178,11 +4176,6 @@ WEB_HTML_HEAD
     if (!list.classList.contains('ready') && !stepsReadyTimer) {
       stepsReadyTimer = setTimeout(() => list.classList.add('ready'), 650);
     }
-    const absent = (st.steps || []).filter((s) => s.av === false && s.key !== 'report').map((s) => s.n);
-    const box = $('absent');
-    box.hidden = !absent.length || st.phase !== 'choose';
-    const txt = `<b>Not on this Mac:</b> ${absent.map(escapeHtml).join(', ')}. They are skipped.`;
-    setHtml(box, txt);
     if (st.phase === 'choose') {
       const all = rows.length > 0 && rows.every(([, i]) => isOn(i, st));
       const word = all ? 'Select none' : 'Select all';
@@ -4444,9 +4437,9 @@ WEB_HTML_HEAD
     latestUpdates = st.updates || [];
     root.dataset.phase = st.phase;
     if (st.phase === 'choose') root.classList.add('chose');
-    // Counts cover what the list shows: not the report step, not tools that
-    // are missing on this Mac.
-    const shown = st.phase === 'choose' ? st.steps : (st.steps || []).filter((s) => s.key !== 'report' && s.av !== false);
+    // Counts cover what the list shows: not the report step after Start, and
+    // never a tool that is missing on this Mac (stepSelected leaves it out).
+    const shown = st.phase === 'choose' ? st.steps : (st.steps || []).filter((s) => s.key !== 'report');
     const counts = selectedCounts(shown, st.phase, st.phase === 'choose' ? chooseLocal : null);
     paintHeader(st, counts);
     paintVerdict(st, counts);

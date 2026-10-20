@@ -122,8 +122,9 @@ Default is to notify at the end of every run (dashboard and `--plain`, including
 ### Which steps run
 
 The dashboard lists the sources installed on this Mac with a switch and waits
-for **Start update** (or <kbd>⌘</kbd><kbd>↩</kbd>) before any step command runs; tools
-that are not installed are named once below the list instead. Closing the tab
+for **Start update** (or <kbd>⌘</kbd><kbd>↩</kbd>) before any step command runs. Tools
+that are not installed do not appear on the dashboard at all, and their saved
+switch is kept for when you install them. Closing the tab
 still cancels the run. Your enabled set is saved to
 `~/.config/updatetools/enabled` (one key per line) when you press Start update; the
 internal `report` step always runs. With `--yes` the run starts immediately.
