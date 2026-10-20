@@ -5364,11 +5364,12 @@ WEB_HTML_HEAD
     if (e.key === 'Escape' && !$('ledger').hidden) closeLedger();
   });
   // After the run, closing the tab ends the server (and the terminal) at once.
-  // Before and during the run a reload must not, so only then.
+  // Before and during the run a reload must not: the page only says it has
+  // gone, and the server waits for it to come back (a reload does). A tab
+  // closed mid-run frees the terminal shortly after the run.
   addEventListener('pagehide', () => {
-    if (latestPhase === 'done' || latestPhase === 'error') {
-      try { navigator.sendBeacon('quit', ''); } catch { /* best effort */ }
-    }
+    const over = latestPhase === 'done' || latestPhase === 'error';
+    try { navigator.sendBeacon(over ? 'quit' : 'gone', ''); } catch { /* best effort */ }
   });
 
   /* ── polling ────────────────────────────────────────────────────────────── */
@@ -6418,6 +6419,9 @@ root, token_file, reply_file, idle_timeout = sys.argv[1], sys.argv[2], sys.argv[
 # The terminal the run was started from, and how long a stopped tool may take.
 tty_path = sys.argv[5] if len(sys.argv) > 5 else ''
 grace = float(sys.argv[6]) if len(sys.argv) > 6 else 30.0
+# How long a page that has gone quiet without saying it left is waited for once
+# the run is over (a hidden tab's timers stop; it is still open).
+away_timeout = float(sys.argv[7]) if len(sys.argv) > 7 else 28800.0
 parent = os.getppid()
 # The token arrives in a 0600 file, not on the command line — argv is visible to
 # every user on the machine via ps, which would defeat the point of having one.
@@ -6425,7 +6429,8 @@ with open(token_file) as f:
     token = f.read().strip()
 os.unlink(token_file)
 os.chdir(root)
-state = {'last': time.time(), 'quit': False}
+# Monotonic: the time the Mac sleeps is not time the page was quiet.
+state = {'last': time.monotonic(), 'quit': False, 'gone': False}
 
 class H(http.server.SimpleHTTPRequestHandler):
     def _authed(self):
@@ -6451,9 +6456,10 @@ class H(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
-        state['last'] = time.time()
+        state['last'] = time.monotonic()
         if not self._authed():
             return self._deny()
+        state['gone'] = False
         if self.path.startswith('/?k=') or self.path == '/?k=' + token:
             # first visit: swap the URL token for a cookie, then drop it from the
             # address bar so the token isn't left sitting in history
@@ -6467,10 +6473,11 @@ class H(http.server.SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
-        state['last'] = time.time()
+        state['last'] = time.monotonic()
         if not self._authed():
             return self._deny()
         path = self.path.split('?')[0]
+        state['gone'] = path == '/gone'
         length = int(self.headers.get('Content-Length') or 0)
         body = self.rfile.read(length) if length else b''
         if path == '/prompt':
@@ -6523,6 +6530,9 @@ class H(http.server.SimpleHTTPRequestHandler):
             return
         if path == '/quit':
             state['quit'] = True
+            self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers()
+            return
+        if path == '/gone':
             self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers()
             return
         self._deny()
@@ -6619,8 +6629,22 @@ class Server(socketserver.ThreadingTCPServer):
 with Server(('127.0.0.1', 0), H) as srv:
     print(srv.server_address[1], flush=True)
     # The run has no terminal UI to quit from, so the page's lifetime ends the
-    # server: close the tab (polling stops) or press Close, and we shut down.
+    # server, and with it the terminal. A quiet page is not a closed one: a
+    # browser stops the timers of a hidden tab. So while the run is going the
+    # server never ends because the page is quiet. Otherwise a page that said
+    # it left (pagehide) is waited for idle_timeout, so a reload comes back to
+    # it; a page that is only quiet, away_timeout. Both count from the last
+    # request or the moment the phase changed, whichever is later: a page quiet
+    # through the end of the run is still there to show the result.
+    def phase_now(prev):
+        try:
+            with open(os.path.join(root, 'state.json')) as f:
+                return json.load(f).get('phase') or prev
+        except (OSError, ValueError):
+            return prev
+
     def watch():
+        phase, since = None, time.monotonic()
         while True:
             time.sleep(1)
             if not state.get('orphan') and os.getppid() != parent:
@@ -6629,7 +6653,15 @@ with Server(('127.0.0.1', 0), H) as srv:
                     orphaned()
                 except Exception as e:
                     tell(f'updatetools: could not stop what the killed run left running: {e}')
-            if state['quit'] or time.time() - state['last'] > idle_timeout:
+            now = phase_now(phase)
+            if now != phase:
+                phase, since = now, time.monotonic()
+            if state['quit']:
+                srv.shutdown(); return
+            if phase == 'run':
+                continue
+            limit = idle_timeout if state['gone'] else away_timeout
+            if time.monotonic() - max(state['last'], since) > limit:
                 srv.shutdown(); return
     threading.Thread(target=watch, daemon=True).start()
     srv.serve_forever()
@@ -6659,14 +6691,15 @@ ut_web_start() {
   chmod 700 "$WEB_DIR" 2>/dev/null
   local tokfile="$WEB_DIR/.token"
   ( umask 077; printf '%s' "$WEB_TOKEN" > "$tokfile" )
-  # Idle limit above a minute: browsers wake timers in a long-hidden tab only
-  # about once a minute, and a shorter limit would end the run's dashboard
-  # while it sits in a background tab. A closed tab still ends the server at
-  # once after the run (the page sends /quit on pagehide).
+  # The server never ends under a run that is going, however long the page is
+  # quiet: a browser stops the timers of a hidden tab. Otherwise it waits
+  # WEB_IDLE for a page that said it left (pagehide; a reload comes back) and
+  # WEB_AWAY for one that is only quiet. After the run a closed tab ends it at
+  # once (the page sends /quit on pagehide).
   local term
   term="$(tty 2>/dev/null)" || term=""
   python3 "$WEB_DIR/serve.py" "$WEB_DIR" "$tokfile" "$PROMPT_REP" "${WEB_IDLE:-75}" "$term" "${STOP_GRACE:-30}" \
-    > "$WEB_DIR/port" 2>/dev/null &
+    "${WEB_AWAY:-28800}" > "$WEB_DIR/port" 2>/dev/null &
   WEB_PID=$!
   local tries=0 port=""
   while [ $tries -lt 50 ]; do

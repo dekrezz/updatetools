@@ -163,6 +163,8 @@ The report step stays last.
 | `STALL_TIMEOUT` | Seconds a step may show no progress before it is stopped (default `300`, `0` turns it off). A Homebrew download that is still arriving counts as progress, though Homebrew prints nothing while it downloads. |
 | `NET_TIMEOUT` | Seconds without a network connection before the run stops (default `30`, `0` turns the network watch off). |
 | `STOP_GRACE` | Seconds a tool that is asked to stop gets to exit before it is killed (default `30`). |
+| `WEB_IDLE` | Seconds the dashboard's server waits for a closed (or reloading) tab to come back before it ends, outside a run (default `75`). |
+| `WEB_AWAY` | Seconds the dashboard's server waits for a quiet tab before it ends, outside a run (default `28800`, a working day). |
 | `DIAG_DIR` | Where a run that stopped or failed keeps its log and report (default `~/Library/Logs/updatetools`). |
 | `DIAG_KEEP` | How many of those runs are kept (default `20`). |
 | `NOTIFY_MODE=never` | `--no-notify` |
@@ -319,10 +321,19 @@ more without restarting the tool. If the password is rejected when you press
 Access is locked down: loopback only, a random per-run token exchanged for an
 `HttpOnly` cookie (everything else is `403`), a `Host` check against DNS
 rebinding, and the token handed to the server through a `0600` file rather than
-argv. Closing the tab ends the run's server, and with it the run: once the run
-is over the page tells the server at once; before that, the server waits 75
-seconds without a request (browsers wake a long-hidden tab only about once a
-minute, so a shorter limit could end a run's dashboard in a background tab).
+argv. The page's lifetime ends the run's server, and with it the run, but a
+quiet page is not taken for a closed one: a browser stops the timers of a hidden
+tab (its window behind the terminal, another tab in front). So:
+
+- While the run is going, the server never ends because the page is quiet. Come
+  back to the tab at any time and it picks up where the run is.
+- Once the run is over, closing the tab ends the server at once.
+- Closing the tab before or during the run tells the server too; it waits
+  `WEB_IDLE` seconds for the page to come back (a reload does), and while the run
+  is going it waits for the run to end first. On the chooser this cancels the run.
+- A page that is only quiet after the run (the tab is hidden, or the browser
+  crashed) is waited for `WEB_AWAY` seconds, counted from the end of the run if
+  it was quiet through it. Time the Mac sleeps does not count.
 
 The log and HTML report live in a temp dir that goes away when the run ends.
 A deferred DMG update temporarily leaves its verified staged app and one-shot
