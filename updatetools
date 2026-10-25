@@ -96,6 +96,29 @@ DO_FORGET_PASSWORD=0
 SCHEDULE_INTERVAL=""
 UT_RUN_FAILS=0
 
+# A run names its scratch files after its PID, in TMPDIR. Only a directory that
+# is ours alone keeps another user on this Mac from planting a file or a link at
+# such a name first, as anyone can in a shared /tmp. So TMPDIR unset, missing,
+# not ours, or writable by others gives way to this user's own temporary
+# directory (what macOS sets TMPDIR to in a login session; ssh leaves it unset).
+ut_private_tmpdir() {
+  local d perm
+  for d in "${TMPDIR:-}" "$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null)"; do
+    [ -n "$d" ] && [ -d "$d" ] && [ -O "$d" ] || continue
+    perm="$(stat -L -f %Lp "$d" 2>/dev/null)" || continue
+    [ $(( 8#$perm & 8#022 )) -eq 0 ] || continue
+    printf '%s\n' "$d"
+    return 0
+  done
+  return 1
+}
+if ! _ut_tmp="$(ut_private_tmpdir)"; then
+  echo "updatetools: no temporary directory that only $(id -un) can write to (TMPDIR=${TMPDIR:-unset})" >&2
+  exit 1
+fi
+TMPDIR="$_ut_tmp"; export TMPDIR
+unset _ut_tmp
+
 UT_LAUNCH_LABEL="com.dekrezz.updatetools"
 
 UPDATETOOLS_FORMULA_URL="https://raw.githubusercontent.com/dekrezz/updatetools/main/Formula/updatetools.rb"
@@ -7019,6 +7042,7 @@ ut_web_server_py() {
 #      to the askpass reply file; it is never echoed anywhere, and only the run
 #      (not this server) seals it when "Remember password" is ticked
 import http.server, socketserver, sys, os, threading, time, json, http.cookies, signal, subprocess, shutil
+import hmac, urllib.parse
 
 root, token_file, reply_file, idle_timeout = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
 # The terminal the run was started from, and how long a stopped tool may take.
@@ -7034,6 +7058,18 @@ with open(token_file) as f:
     token = f.read().strip()
 os.unlink(token_file)
 os.chdir(root)
+# Nothing the page sends comes near this; a bigger body is not read into memory.
+MAX_BODY = 64 * 1024
+
+def write_private(path, text):
+    # 0600 from the start, and never through a link someone left at the path.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        f.write(text)
+
+def is_token(value):
+    return hmac.compare_digest(value.encode('utf-8'), token.encode('utf-8'))
+
 # Monotonic: the time the Mac sleeps is not time the page was quiet.
 state = {'last': time.monotonic(), 'quit': False, 'gone': False}
 
@@ -7042,12 +7078,14 @@ class H(http.server.SimpleHTTPRequestHandler):
         host = (self.headers.get('Host') or '').split(':')[0]
         if host not in ('127.0.0.1', 'localhost', '[::1]', '::1'):
             return False
-        if ('?k=' + token) in self.path or ('&k=' + token) in self.path:
+        # The token is the exact value of k, or of the cookie: never a prefix.
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        if any(is_token(k) for k in query.get('k', [])):
             return True
         raw = self.headers.get('Cookie')
         if raw:
             c = http.cookies.SimpleCookie(raw)
-            if 'ut' in c and c['ut'].value == token:
+            if 'ut' in c and is_token(c['ut'].value):
                 return True
         return False
 
@@ -7083,7 +7121,15 @@ class H(http.server.SimpleHTTPRequestHandler):
             return self._deny()
         path = self.path.split('?')[0]
         state['gone'] = path == '/gone'
-        length = int(self.headers.get('Content-Length') or 0)
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            length = -1
+        if length < 0 or length > MAX_BODY:
+            self.close_connection = True
+            self.send_response(413 if length > MAX_BODY else 400)
+            self.send_header('Content-Length', '0'); self.end_headers()
+            return
         body = self.rfile.read(length) if length else b''
         if path == '/prompt':
             try:
@@ -7093,15 +7139,15 @@ class H(http.server.SimpleHTTPRequestHandler):
             except Exception:
                 pw, remember = '', None
             # The "Remember password" box, when the sheet offered it: written
-            # before the reply, which is what the run waits for.
-            if isinstance(remember, bool):
-                fd = os.open(reply_file + '.remember', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, 'w') as f:
-                    f.write('1' if remember else '0')
-            # 0600 from the start: the reply file briefly holds the password
-            fd = os.open(reply_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, 'w') as f:
-                f.write(pw + '\n')
+            # before the reply, which is what the run waits for. The reply file
+            # briefly holds the password.
+            try:
+                if isinstance(remember, bool):
+                    write_private(reply_file + '.remember', '1' if remember else '0')
+                write_private(reply_file, pw + '\n')
+            except OSError:
+                self.send_response(500); self.send_header('Content-Length', '0'); self.end_headers()
+                return
             self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers()
             return
         if path == '/start':
@@ -7114,12 +7160,11 @@ class H(http.server.SimpleHTTPRequestHandler):
                     keys = [str(x).strip() for x in raw if str(x).strip()]
             except Exception:
                 keys = []
-            start_path = os.path.join(root, 'start')
-            fd = os.open(start_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, 'w') as f:
-                f.write('\n'.join(keys))
-                if keys:
-                    f.write('\n')
+            try:
+                write_private(os.path.join(root, 'start'), '\n'.join(keys) + ('\n' if keys else ''))
+            except OSError:
+                self.send_response(500); self.send_header('Content-Length', '0'); self.end_headers()
+                return
             self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers()
             return
         if path == '/retry':
@@ -7134,10 +7179,11 @@ class H(http.server.SimpleHTTPRequestHandler):
             if not keys:
                 self.send_response(400); self.send_header('Content-Length', '0'); self.end_headers()
                 return
-            retry_path = os.path.join(root, 'retry')
-            fd = os.open(retry_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, 'w') as f:
-                f.write('\n'.join(keys) + '\n')
+            try:
+                write_private(os.path.join(root, 'retry'), '\n'.join(keys) + '\n')
+            except OSError:
+                self.send_response(500); self.send_header('Content-Length', '0'); self.end_headers()
+                return
             self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers()
             return
         if path == '/quit':
@@ -8694,7 +8740,8 @@ ut_unfinished_run() {
     [ -n "$dir" ] && printf '  Its log: %s\n' "$dir" >&2
   fi
   rm -rf "$scratch/updatetools-$pid.log" "$scratch/updatetools-steps-$pid" \
-    "$scratch/updatetools-wrap-$pid" "$scratch/updatetools-updates-$pid.txt" "$scratch/updatetools-net-$pid" 2>/dev/null
+    "$scratch/updatetools-wrap-$pid" "$scratch/updatetools-wrap-$pid".* \
+    "$scratch/updatetools-updates-$pid.txt" "$scratch/updatetools-net-$pid" 2>/dev/null
   return 0
 }
 
@@ -8752,6 +8799,21 @@ ut_acquire_lock() {
 # ===========================================================================
 # Run
 # ===========================================================================
+# ut_make_wrap_dir — the password prompt's directory: the askpass helper, the
+# prompt's request and the password's reply. Made new for each run by mktemp
+# (0700, never one that was already there), named after the run so an
+# unfinished run's can be swept.
+ut_make_wrap_dir() {
+  local base="${TMPDIR:-/tmp}"
+  WRAP_DIR="$(mktemp -d "${base%/}/updatetools-wrap-$$.XXXXXX")" || {
+    WRAP_DIR=""; PROMPT_REQ=""; PROMPT_REP=""
+    echo "updatetools: cannot create a private directory for the password prompt in ${base%/}" >&2
+    return 1
+  }
+  PROMPT_REQ="$WRAP_DIR/req"
+  PROMPT_REP="$WRAP_DIR/rep"
+}
+
 run_web() {
   T0=$SECONDS
   LOG="${TMPDIR:-/tmp}/updatetools-$$.log"
@@ -8790,10 +8852,7 @@ run_web() {
 # steps get routed through the dashboard instead of blocking on /dev/tty.
 # The helper writes the prompt text to a request file and waits for the run loop
 # to write a reply file; the render loop below polls and handles it.
-WRAP_DIR="${TMPDIR:-/tmp}/updatetools-wrap-$$"
-mkdir -p "$WRAP_DIR"
-PROMPT_REQ="${WRAP_DIR}/req"
-PROMPT_REP="${WRAP_DIR}/rep"
+ut_make_wrap_dir || return 1
 # The request/reply paths are BAKED IN (unquoted heredoc expands them now)
 # rather than read from the environment: brew scrubs its subprocess env down to
 # an allowlist (HOMEBREW_*, SUDO_ASKPASS, PATH, …), so any custom vars we export

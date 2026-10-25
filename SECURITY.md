@@ -20,7 +20,10 @@ dashboard shows the prompt to you; it is never answered automatically.
 
 **The password** is typed into the local dashboard, kept in memory for the
 privileged steps, and handed to `sudo` through a `0600` temporary file that is
-deleted as soon as it is read. It is never logged.
+deleted as soon as it is read, in a directory made new for each run that only
+you can open (`0700`). It is never logged. A run keeps its scratch files in
+`TMPDIR` only when that directory is yours alone; otherwise (unset, as over
+ssh, or a shared `/tmp`) it uses your own temporary directory.
 
 **Remember password** is off unless you tick it on the password sheet. Then the
 password is kept for the next dashboard runs, which do not ask for it again. It
