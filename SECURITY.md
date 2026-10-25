@@ -29,9 +29,9 @@ which the key never leaves: `~/.config/updatetools/saved-password` (`0600`)
 holds only the key's wrapped handle, a one-time public key and the AES-256-GCM
 ciphertext (its key from ECDH and HKDF-SHA256). No other Mac can open that file,
 whether it comes from a backup, a synced folder or a stolen disk, and the
-source holds no secret. The Swift helper
-that does this is in the script and is built on first use with `xcrun swiftc`,
-then kept in `~/.cache/updatetools/password-helper`. A saved password that
+source holds no secret. The Swift helper that does this is in the script and is
+built on first use with `xcrun swiftc`, then kept in
+`~/.cache/updatetools/password-helper`. A saved password that
 `sudo` rejects (it was changed) or that cannot be opened on this Mac is deleted,
 and the sheet says so. Unticking the box, or `updatetools --forget-password`,
 deletes it. `--plain` and scheduled runs never use it.
@@ -59,12 +59,27 @@ script (`xcrun clang`). A LaunchAgent is installed only by `--schedule`.
 
 **What it does not protect against:**
 
-- **A program you run, once you saved the password.** Any program running as
-  you (malware, a script, an AI agent with shell access) can ask the Secure Enclave to open the saved password, the way
-  updatetools does. Only a confirmation each time, such as Touch ID, would stop
-  that, and it would take away what the box is for. If this matters to you,
-  leave the box unticked. Such a program can often catch a typed password too,
-  for instance by wrapping `sudo` in your shell profile.
+- **Malware you run on your Mac.** The encryption is not the weak point: it
+  keeps the saved password from everything outside this Mac (a backup, a synced
+  folder, a stolen disk, another Mac) and from anyone reading this source. It
+  cannot keep it from a program that already runs as you: malware, a script you
+  do not trust, an AI agent with shell access. Such a program can:
+  - ask the Secure Enclave to open the saved password, the way updatetools
+    does;
+  - change updatetools or Homebrew, which are files you own (in `~/.local/bin`
+    or `/opt/homebrew`), so that the next run hands it root, whether the
+    password was saved or typed;
+  - catch a typed password, for instance by wrapping `sudo` in your shell
+    profile.
+
+  No check inside updatetools can prevent this, because such a program could
+  change the check too. Asking for Touch ID each time would not prevent it
+  either: a changed updatetools gets the password as soon as you confirm. Once
+  malware runs as an administrator, it is one step away from root on any Mac.
+  Keeping it off your Mac is up to you. If you run scripts or tools you do not
+  fully trust, leave **Remember password** unticked (or run
+  `updatetools --forget-password`), and consider a standard account for daily
+  work with a separate administrator account.
 
 - **Compromised packages.** updatetools runs each package manager's own update
   command and trusts what that registry serves. A malicious npm, PyPI, crates or
