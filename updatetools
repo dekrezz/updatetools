@@ -41,6 +41,8 @@
 #   updatetools --self-update   # install the latest release (sha256-checked)
 #   updatetools --schedule [interval]  # install a LaunchAgent (default every 24h)
 #   updatetools --unschedule    # remove the LaunchAgent
+#   updatetools --forget-password  # delete the administrator password you
+#                               # asked the dashboard to remember
 #   updatetools --no-notify     # never show a desktop notification at end of run
 #   updatetools --notify-on-error  # notify only when a step failed
 #
@@ -90,6 +92,7 @@ FLAG_NO_NOTIFY=0
 FLAG_NOTIFY_ON_ERROR=0
 DO_SCHEDULE=0
 DO_UNSCHEDULE=0
+DO_FORGET_PASSWORD=0
 SCHEDULE_INTERVAL=""
 UT_RUN_FAILS=0
 
@@ -342,6 +345,7 @@ while [ "$_ut_i" -le $# ]; do
       fi
       ;;
     --unschedule)    DO_UNSCHEDULE=1 ;;
+    --forget-password) DO_FORGET_PASSWORD=1 ;;
     -h|--help)
       updatetools_print_help "$(updatetools_resolve_self)" || exit 1
       exit 0
@@ -3496,6 +3500,22 @@ try {
   .layout-note b{color:var(--warn-ink); font-weight:600}
   .layout-note.in{animation:lang-in .35s var(--ease-out-quart)}
   .layout-note.in b{display:inline-block; animation:lang-pop .4s var(--ease-out-quart)}
+  /* Remember password: under the field, in line with its text. */
+  .remember{
+    margin:-8px 0 0; padding:0 0 0 20px;
+    display:flex; flex-wrap:wrap; align-items:center; column-gap:8px; row-gap:2px;
+    font:400 14px/1.4 var(--sans); color:var(--ink-2); letter-spacing:.16px;
+  }
+  .remember[hidden]{display:none}
+  .remember input{width:16px; height:16px; margin:0; flex:none; accent-color:var(--accent); cursor:pointer}
+  .remember label{cursor:pointer}
+  .remember-note{color:var(--ink-3); font-size:13px}
+  .remember-note::before{content:"· "}
+  .remember.off input,.remember.off label{cursor:default}
+  .remember.off label{color:var(--ink-3)}
+  /* Off: the reason on its own line, under the label. */
+  .remember.off .remember-note{flex-basis:100%; padding-left:24px}
+  .remember.off .remember-note::before{content:none}
   @keyframes lang-in{from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none}}
   @keyframes lang-pop{from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none}}
   .go{
@@ -3837,7 +3857,7 @@ try {
         </button>
       </div>
       <p class="pw-sub" id="pw-sub">macOS asks for it to install system-wide updates</p>
-      <p class="info-tip" id="pw-tip" role="tooltip">It goes to <code>sudo</code> on this Mac only: never stored, never sent anywhere. Root access ends before the developer tools update, and nothing you have open is closed without being safe to restart.</p>
+      <p class="info-tip" id="pw-tip" role="tooltip">It goes to <code>sudo</code> on this Mac only and is never sent anywhere. It is kept only if you tick <b>Remember password</b>: encrypted with a key in this Mac's Secure Enclave, which no other Mac, backup or copy of the file can open. Root access ends before the developer tools update, and nothing you have open is closed without being safe to restart.</p>
       <form class="pw-decoy" autocomplete="username" aria-hidden="true">
         <input type="text" name="username" autocomplete="username" tabindex="-1">
         <input type="password" name="password" autocomplete="current-password" tabindex="-1">
@@ -3855,6 +3875,11 @@ try {
         </button>
       </form>
       <p class="layout-note" id="layout-note" hidden></p>
+      <div class="remember" id="pw-remember" hidden>
+        <input type="checkbox" id="pw-remember-box" aria-describedby="pw-remember-note">
+        <label for="pw-remember-box">Remember password</label>
+        <span class="remember-note" id="pw-remember-note">encrypted on this Mac</span>
+      </div>
     </div>
   </div>
 WEB_HTML_HEAD
@@ -5121,12 +5146,36 @@ WEB_HTML_HEAD
   function freshPrompt(st, answered) {
     return !!st.prompt && st.ask !== answered;
   }
+  // The "Remember password" box for a prompt: only the administrator password
+  // sheet offers it (state.json's remember), ticked when a saved one was in
+  // use; off, with the reason, when this Mac cannot keep the password.
+  function rememberView(st) {
+    const r = st && st.remember;
+    if (!r) return { show: false, on: false, disabled: true, note: '' };
+    if (!r.ok) return { show: true, on: false, disabled: true, note: `Not available: ${r.why || 'no reason given'}` };
+    return { show: true, on: !!r.on, disabled: false, note: 'encrypted on this Mac' };
+  }
+  // What the page posts: the box's answer only where the box was offered.
+  function promptBody(reply, view, ticked) {
+    return view.show && !view.disabled ? { reply, remember: !!ticked } : { reply };
+  }
+  const rememberRow = $('pw-remember'), rememberBox = $('pw-remember-box'), rememberNote = $('pw-remember-note');
+  let rememberNow = rememberView(null);
+  function paintRemember(view) {
+    rememberNow = view;
+    rememberRow.hidden = !view.show;
+    rememberRow.classList.toggle('off', view.disabled);
+    rememberBox.checked = view.on;
+    rememberBox.disabled = view.disabled;
+    rememberNote.textContent = view.note;
+  }
   let pwReturn = null, askingAsk = null, answeredAsk = null;
-  function askPassword(prompt, ask) {
+  function askPassword(prompt, ask, remember) {
     // The reply answers whichever prompt is current, so track the latest one.
     askingAsk = ask;
     if (asking) return;
     asking = true;
+    paintRemember(remember || rememberView(null));
     const again = /again|wrong|sorry/i.test(prompt);
     const plain = /^\s*(password|\[sudo\].*password.*):?\s*$/i.test(prompt);
     $('pw-title').textContent = again ? 'Wrong password, try again' : 'Administrator password';
@@ -5146,6 +5195,7 @@ WEB_HTML_HEAD
     if (pwReturn && pwReturn.isConnected) pwReturn.focus({ preventScroll: true });
     chalClear();
     setEditable(false);
+    paintRemember(rememberView(null));
     layoutNow = '';
     layoutPass = 'English';
     paintLayout();
@@ -5154,13 +5204,13 @@ WEB_HTML_HEAD
     // Only an open prompt has a reply; a stray submit must not answer the next one.
     if (!asking) return;
     answeredAsk = askingAsk;
-    const reply = chal.join('');
+    const body = promptBody(chal.join(''), rememberNow, rememberBox.checked);
     hidePassword();
     try {
       await fetch('prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reply }),
+        body: JSON.stringify(body),
       });
     } catch { /* the run will time out on its own */ }
   }
@@ -5209,6 +5259,8 @@ WEB_HTML_HEAD
     setRevealed(!revealed);
   });
   $('ut-chal-go').addEventListener('click', submitChal);
+  // Ticking the box leaves the typing where it was.
+  rememberBox.addEventListener('change', () => { if (asking) chalInput.focus(); });
   const infoBtn = sheet.querySelector('.info');
   const tipOn = (on) => infoBtn.classList.toggle('open', on);
   infoBtn.addEventListener('mouseenter', () => tipOn(true));
@@ -5435,7 +5487,7 @@ WEB_HTML_HEAD
       histTick(st);
       renderFiles(st);
       if (freshPrompt(st, answeredAsk)) {
-        askPassword(st.prompt, st.ask);
+        askPassword(st.prompt, st.ask, rememberView(st));
         applyLayout(st.layoutNow || '', st.layoutPass || 'English');
       } else if (asking && !st.prompt) hidePassword();
       loadLog();
@@ -5852,6 +5904,278 @@ ut_remember_password_layout() {
     rm -f "$f.tmp.$$"
     echo "updatetools: cannot save password keyboard layout: $f" >&2
   fi
+}
+
+# ---------------------------------------------------------------------------
+# The administrator password, remembered only when you tick the box for it
+# ---------------------------------------------------------------------------
+# Sealed with a key that lives in this Mac's Secure Enclave and cannot be taken
+# out of it: the file is useless on any other Mac, in a backup or a synced
+# folder, and the source holds no secret. A program you run on this Mac can
+# still ask the Secure Enclave to open it, as updatetools does (SECURITY.md).
+# Dashboard runs only: --plain and --schedule never use it.
+ut_saved_password_file() {
+  printf '%s\n' "${UPDATETOOLS_SAVED_PASSWORD:-$HOME/.config/updatetools/saved-password}"
+}
+
+# The reason in a helper's stderr: its first line, without the tool's name.
+ut_password_why() {
+  local why="${1%%$'\n'*}"
+  why="${why#updatetools-password: }"; why="${why#updatetools: }"
+  printf '%s\n' "${why:-the password helper failed without saying why}"
+}
+
+# ut_password_helper CMD [FILE] — run the Secure Enclave helper (its source is
+# below), built with the Command Line Tools' swiftc on first use and kept in the
+# cache, one build per version of its source.
+ut_password_helper() {
+  local src sum base dir bin out d
+  src="$(ut_password_helper_source)"
+  sum="$(printf '%s\n' "$src" | shasum -a 256)"; sum="${sum:0:16}"
+  base="${XDG_CACHE_HOME:-$HOME/.cache}/updatetools/password-helper"
+  dir="$base/$sum"; bin="$dir/updatetools-password"
+  if [ ! -x "$bin" ]; then
+    # Without the Command Line Tools, xcrun would pop up their installer.
+    if ! xcode-select -p >/dev/null 2>&1; then
+      echo "updatetools: the Command Line Tools are not installed (xcode-select --install)" >&2; return 1
+    fi
+    if ! ( umask 077; mkdir -p "$dir" ) 2>/dev/null; then
+      echo "updatetools: cannot create $dir" >&2; return 1
+    fi
+    if ! printf '%s\n' "$src" > "$dir/helper.swift"; then
+      echo "updatetools: cannot write $dir/helper.swift" >&2; return 1
+    fi
+    if ! out="$(xcrun swiftc -O -swift-version 5 "$dir/helper.swift" -o "$bin.$$" 2>&1)"; then
+      rm -f "$dir/helper.swift" "$bin.$$"
+      echo "updatetools: cannot build the password helper with xcrun swiftc: $(printf '%s\n' "$out" | grep -m1 'error' || printf '%s\n' "${out%%$'\n'*}")" >&2
+      return 1
+    fi
+    rm -f "$dir/helper.swift"
+    if ! { chmod 700 "$bin.$$" && mv -f "$bin.$$" "$bin"; }; then
+      rm -f "$bin.$$"; echo "updatetools: cannot install the password helper in $dir" >&2; return 1
+    fi
+    # Builds of an older source are of no use any more.
+    for d in "$base"/*; do [ "$d" = "$dir" ] || rm -rf "$d"; done
+  fi
+  "$bin" "$@"
+}
+
+# ut_saved_password_unlock — answer sudo with the saved password, if there is
+# one. rc 0: sudo took it, and SUDO_PW holds it for the privileged steps' own
+# prompts. Otherwise UT_SAVED_NOTE says why it was not used (empty: none saved).
+# One sudo rejects, or one that cannot be opened on this Mac, is deleted.
+ut_saved_password_unlock() {
+  local f pw rc errf err
+  UT_SAVED_NOTE=""
+  f="$(ut_saved_password_file)"
+  [ -f "$f" ] || return 1
+  errf="$(mktemp "${TMPDIR:-/tmp}/updatetools-pw.XXXXXX")" || {
+    UT_SAVED_NOTE="Your saved password could not be read: no temporary file. Type the password."
+    echo "updatetools: $UT_SAVED_NOTE" >&2; return 1
+  }
+  pw="$(ut_password_helper open "$f" 2>"$errf" < /dev/null)"; rc=$?
+  err="$(cat "$errf")"; rm -f "$errf"
+  if [ "$rc" -eq 0 ] && [ -z "$pw" ]; then rc=1; err="the password helper returned nothing"; fi
+  if [ "$rc" -eq 0 ]; then
+    ( umask 077; printf '%s\n' "$pw" > "$PROMPT_REP" )
+    if sudo -S -v < "$PROMPT_REP" 2>/dev/null; then
+      rm -f "$PROMPT_REP"
+      SUDO_PW="$pw"
+      return 0
+    fi
+    rm -f "$PROMPT_REP"
+    UT_SAVED_NOTE="Your saved password was not accepted (was it changed?), so it was deleted. Type the current one."
+    rm -f "$f" || echo "updatetools: cannot delete $f" >&2
+  elif [ "$rc" -eq 3 ]; then
+    UT_SAVED_NOTE="Your saved password could not be opened on this Mac, so it was deleted: $(ut_password_why "$err"). Type the password."
+    rm -f "$f" || echo "updatetools: cannot delete $f" >&2
+  else
+    UT_SAVED_NOTE="Your saved password could not be read: $(ut_password_why "$err"). Type the password."
+  fi
+  pw=""
+  echo "updatetools: $UT_SAVED_NOTE" >&2
+  return 1
+}
+
+# ut_remember_offer TICKED — the sheet's "Remember password" box, as state.json
+# shows it next to the administrator password prompt: offered (TICKED true or
+# false), or off with the reason this Mac cannot keep the password.
+ut_remember_offer() {
+  local err
+  if err="$(ut_password_helper check 2>&1 >/dev/null)"; then
+    UT_REMEMBER_JSON="{\"ok\":true,\"on\":$1}"
+  else
+    UT_REMEMBER_JSON="{\"ok\":false,\"why\":\"$(ut_json_escape "$(ut_password_why "$err")")\"}"
+  fi
+}
+
+# ut_saved_password_keep BOX — once sudo took a typed password: seal it when the
+# box was ticked (1), delete a saved one when it was not (0), nothing when the
+# sheet did not offer the box. A password that cannot be saved is said so, on
+# the dashboard and in the terminal, and the run goes on.
+ut_saved_password_keep() {
+  local f err why=""
+  f="$(ut_saved_password_file)"
+  case "${1:-}" in
+    1)
+      if ! mkdir -p "$(dirname "$f")" 2>/dev/null; then
+        why="cannot create $(dirname "$f")"
+      elif ! err="$(printf '%s\n' "$SUDO_PW" | ut_password_helper seal "$f" 2>&1 >/dev/null)"; then
+        why="$(ut_password_why "$err")"
+      fi
+      [ -n "$why" ] || return 0
+      UT_WEB_NOTICE="The administrator password was not saved: $why"
+      echo "updatetools: $UT_WEB_NOTICE" >&2
+      ;;
+    0)
+      if [ -e "$f" ] && ! rm -f "$f"; then
+        UT_WEB_NOTICE="The saved administrator password could not be deleted: $f"
+        echo "updatetools: $UT_WEB_NOTICE" >&2
+      fi
+      ;;
+  esac
+  return 0
+}
+
+# updatetools --forget-password
+ut_forget_password() {
+  local f
+  f="$(ut_saved_password_file)"
+  if [ ! -e "$f" ]; then
+    printf 'No saved administrator password (%s).\n' "$f"
+    return 0
+  fi
+  if ! rm -f "$f"; then
+    echo "updatetools: cannot delete $f" >&2
+    return 1
+  fi
+  printf 'Deleted the saved administrator password (%s).\n' "$f"
+}
+
+# ut_password_helper_source — the Secure Enclave helper's Swift source, on stdout.
+ut_password_helper_source() {
+  cat <<'UT_PASSWORD_SWIFT'
+// updatetools-password: keeps the administrator password, if you ask it to,
+// encrypted with a key that lives in this Mac's Secure Enclave.
+//
+// The key cannot leave the Secure Enclave. The file holds only the key's
+// wrapped handle (meaningless to any other Mac), a one-time public key and the
+// AES-GCM ciphertext: copied anywhere else (a backup, a synced folder, a stolen
+// disk) it cannot be opened. The source holds no secret, so reading it does
+// not help. It does not stop a program you run yourself on this Mac: like
+// updatetools, such a program can ask the Secure Enclave to open the file.
+//
+//   updatetools-password check        exit 0 when the password can be kept here
+//   updatetools-password seal FILE    password on stdin -> FILE (0600)
+//   updatetools-password open FILE    the password on stdout
+//
+// Exit codes: 0 ok, 1 error, 3 FILE cannot be opened on this Mac (saved on
+// another Mac, damaged, or its key is gone), 10 no Secure Enclave, 64 usage.
+import CryptoKit
+import Darwin
+import Foundation
+import Security
+
+let header = "updatetools-saved-password v1"
+
+func fail(_ code: Int32, _ message: String) -> Never {
+  FileHandle.standardError.write(Data("updatetools-password: \(message)\n".utf8))
+  exit(code)
+}
+
+// An error, short enough for the password sheet.
+func describe(_ error: Error) -> String {
+  if let e = error as? CryptoKitError { return "\(e)" }
+  return (error as NSError).localizedDescription
+}
+
+func check() {
+  guard SecureEnclave.isAvailable else { fail(10, "this Mac has no Secure Enclave") }
+}
+
+// The AES key: HKDF over the ECDH secret, bound to both public keys.
+func sealingKey(_ secret: SharedSecret, _ ephemeral: P256.KeyAgreement.PublicKey,
+                _ enclave: P256.KeyAgreement.PublicKey) -> SymmetricKey {
+  secret.hkdfDerivedSymmetricKey(
+    using: SHA256.self,
+    salt: ephemeral.x963Representation + enclave.x963Representation,
+    sharedInfo: Data(header.utf8), outputByteCount: 32)
+}
+
+func seal(_ path: String) {
+  check()
+  var input = FileHandle.standardInput.readDataToEndOfFile()
+  if input.last == 0x0A { input.removeLast() }
+  guard !input.isEmpty else { fail(1, "no password on stdin") }
+  guard input.count <= 1024 else { fail(1, "password longer than 1024 bytes") }
+
+  var error: Unmanaged<CFError>?
+  guard let access = SecAccessControlCreateWithFlags(
+    nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, .privateKeyUsage, &error)
+  else { fail(1, "access control: \(describe(error!.takeRetainedValue()))") }
+  let enclave: SecureEnclave.P256.KeyAgreement.PrivateKey
+  do { enclave = try SecureEnclave.P256.KeyAgreement.PrivateKey(accessControl: access) }
+  catch { fail(1, "cannot create a Secure Enclave key: \(describe(error))") }
+  // A one-time key pair: its private half is never written anywhere.
+  let ephemeral = P256.KeyAgreement.PrivateKey()
+  let box: AES.GCM.SealedBox
+  do {
+    let secret = try ephemeral.sharedSecretFromKeyAgreement(with: enclave.publicKey)
+    box = try AES.GCM.seal(input, using: sealingKey(secret, ephemeral.publicKey, enclave.publicKey),
+                           authenticating: Data(header.utf8))
+  } catch { fail(1, "cannot encrypt: \(describe(error))") }
+  input.resetBytes(in: 0..<input.count)
+
+  let text = [header, enclave.dataRepresentation.base64EncodedString(),
+              ephemeral.publicKey.x963Representation.base64EncodedString(),
+              box.combined!.base64EncodedString()].joined(separator: "\n") + "\n"
+  // A new 0600 file next to the target, then an atomic rename over it.
+  let tmp = "\(path).\(getpid()).tmp"
+  let fd = Darwin.open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+  guard fd >= 0 else { fail(1, "cannot create \(tmp): \(String(cString: strerror(errno)))") }
+  let bytes = Array(text.utf8)
+  let written = bytes.withUnsafeBufferPointer { Darwin.write(fd, $0.baseAddress, $0.count) }
+  guard written == bytes.count, fsync(fd) == 0, close(fd) == 0 else {
+    unlink(tmp); fail(1, "cannot write \(tmp): \(String(cString: strerror(errno)))")
+  }
+  guard rename(tmp, path) == 0 else {
+    unlink(tmp); fail(1, "cannot save \(path): \(String(cString: strerror(errno)))")
+  }
+}
+
+func open(_ path: String) {
+  check()
+  guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { fail(1, "cannot read \(path)") }
+  let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+  guard lines.count >= 4, lines[0] == header,
+        let blob = Data(base64Encoded: lines[1]),
+        let ephemeralRaw = Data(base64Encoded: lines[2]),
+        let combined = Data(base64Encoded: lines[3]),
+        let ephemeral = try? P256.KeyAgreement.PublicKey(x963Representation: ephemeralRaw),
+        let box = try? AES.GCM.SealedBox(combined: combined)
+  else { fail(3, "it is not a password saved by updatetools") }
+  let enclave: SecureEnclave.P256.KeyAgreement.PrivateKey
+  do { enclave = try SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: blob) }
+  catch { fail(3, "it was saved on another Mac, or its Secure Enclave key is gone: \(describe(error))") }
+  let secret: SharedSecret
+  do { secret = try enclave.sharedSecretFromKeyAgreement(with: ephemeral) }
+  catch { fail(1, "the Secure Enclave did not open it: \(describe(error))") }
+  do {
+    var plain = try AES.GCM.open(box, using: sealingKey(secret, ephemeral, enclave.publicKey),
+                                 authenticating: Data(header.utf8))
+    FileHandle.standardOutput.write(plain)
+    plain.resetBytes(in: 0..<plain.count)
+  } catch { fail(3, "it is damaged: \(describe(error))") }
+}
+
+let args = CommandLine.arguments
+switch (args.count, args.count > 1 ? args[1] : "") {
+case (2, "check"): check()
+case (3, "seal"): seal(args[2])
+case (3, "open"): open(args[2])
+default: fail(64, "usage: updatetools-password check | seal FILE | open FILE")
+}
+UT_PASSWORD_SWIFT
 }
 
 # ===========================================================================
@@ -6575,6 +6899,8 @@ ut_web_state() {
     if [ -n "${UT_PROMPT:-}" ]; then
       [ -n "${UT_LAYOUT_NOW:-}" ] && printf ',"layoutNow":"%s"' "$(ut_json_escape "$UT_LAYOUT_NOW")"
       [ -n "${UT_LAYOUT_PASS:-}" ] && printf ',"layoutPass":"%s"' "$(ut_json_escape "$UT_LAYOUT_PASS")"
+      # Only the administrator password's own prompt offers "Remember password".
+      [ -n "${UT_REMEMBER_JSON:-}" ] && printf ',"remember":%s' "$UT_REMEMBER_JSON"
     fi
     [ -n "${UT_WEB_NOTICE:-}" ] && printf ',"notice":"%s"' "$(ut_json_escape "$UT_WEB_NOTICE")"
     if [ -n "${UT_HALT:-}" ]; then
@@ -6690,7 +7016,8 @@ ut_web_server_py() {
 #   3. Host header must be loopback — blocks DNS-rebinding, where an external
 #      site resolves a name to 127.0.0.1 and talks to us from the victim's browser
 #   4. the password goes over this loopback socket only, and is written straight
-#      to the askpass reply file; it is never stored or echoed anywhere
+#      to the askpass reply file; it is never echoed anywhere, and only the run
+#      (not this server) seals it when "Remember password" is ticked
 import http.server, socketserver, sys, os, threading, time, json, http.cookies, signal, subprocess, shutil
 
 root, token_file, reply_file, idle_timeout = sys.argv[1], sys.argv[2], sys.argv[3], float(sys.argv[4])
@@ -6762,8 +7089,15 @@ class H(http.server.SimpleHTTPRequestHandler):
             try:
                 payload = json.loads(body.decode('utf-8'))
                 pw = payload.get('reply', '') or payload.get('password', '')
+                remember = payload.get('remember')
             except Exception:
-                pw = ''
+                pw, remember = '', None
+            # The "Remember password" box, when the sheet offered it: written
+            # before the reply, which is what the run waits for.
+            if isinstance(remember, bool):
+                fd = os.open(reply_file + '.remember', os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, 'w') as f:
+                    f.write('1' if remember else '0')
             # 0600 from the start: the reply file briefly holds the password
             fd = os.open(reply_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, 'w') as f:
@@ -7388,6 +7722,7 @@ STATUS=(); STEP_T0=(); STEP_SEC=(); STEP_SLUG=(); STEP_IMG=(); STEP_WHY=()
 CUR_STEP=0; CUR_PID=""
 SUDO_KEEPER=""; WRAP_DIR=""; PROMPT_REQ=""; PROMPT_REP=""; LOCKDIR=""
 UT_WEB_REPORT=""; UT_WEB_UPDATES=""; SUDO_PW=""; UT_PROMPT=""; UT_CLOCK_HELD=""
+UT_REMEMBER_JSON=""; UT_SAVED_NOTE=""
 UT_HALT=""; UT_HALT_CAUSE=""; UT_HALT_MSG=""; UT_DIAG=""; UT_SIGNAL=""; UT_STOP_FORCE=""
 UT_NET_ON=""; UT_NET_DOWN_SINCE=""; UT_NET_WHY=""; UT_NET_PROBE_PID=""; UT_NET_LAST=""
 UT_NET_FILE="${TMPDIR:-/tmp}/updatetools-net-$$"; UT_PREV_WARN=""; STEP_RC=(); STEP_FORCED=(); STEP_PID=()
@@ -7447,19 +7782,34 @@ trap 'ut_on_signal HUP' HUP
 # The password is read here with a bounded `read -t`, not by `sudo -v` itself: a
 # bare `sudo -v` blocks on its own tty read, and bash defers traps until the
 # foreground command returns — so closing the window left an immortal process.
+#
+# A password you asked the dashboard to remember answers first; the sheet is
+# shown only when there is none, or when it did not work (the sheet says why).
 sudo_prime() {
   sudo -n true 2>/dev/null && return 0
-  local i
+  local i box prompt='Password' on=false
+  [ -f "$(ut_saved_password_file)" ] && on=true
+  ut_saved_password_unlock && return 0
+  [ -n "${UT_SAVED_NOTE:-}" ] && prompt="$UT_SAVED_NOTE"
+  ut_remember_offer "$on"
   for i in 1 2 3; do
-    ut_web_ask "$([ "$i" = 1 ] && echo 'Password' || echo 'Wrong password — try again')" force || return 1
+    [ "$i" = 1 ] || prompt='Wrong password — try again'
+    rm -f "$PROMPT_REP.remember"
+    ut_web_ask "$prompt" force || { UT_REMEMBER_JSON=""; return 1; }
+    box="$(cat "$PROMPT_REP.remember" 2>/dev/null)"; rm -f "$PROMPT_REP.remember"
     if sudo -S -v < "$PROMPT_REP" 2>/dev/null; then
       rm -f "$PROMPT_REP"
+      UT_REMEMBER_JSON=""
       ut_remember_password_layout "${UT_LAYOUT_ACCEPTED:-}"
+      ut_saved_password_keep "$box"
       return 0
     fi
     SUDO_PW=""            # it was wrong: don't reuse it for the steps
     rm -f "$PROMPT_REP"
+    # The next sheet keeps the tick that came with the rejected password.
+    case "$box" in 1) ut_remember_offer true ;; 0) ut_remember_offer false ;; esac
   done
+  UT_REMEMBER_JSON=""
   return 1
 }
 
@@ -9285,7 +9635,12 @@ if [ "${UPDATETOOLS_LIB_ONLY:-0}" = "1" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
-# Schedule / unschedule exit before the update lock — they must not start a run.
+# Schedule / unschedule / forget-password exit before the update lock — they
+# must not start a run.
+if [ "$DO_FORGET_PASSWORD" = "1" ]; then
+  ut_forget_password
+  exit $?
+fi
 if [ "$DO_UNSCHEDULE" = "1" ]; then
   ut_unschedule
   exit $?

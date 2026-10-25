@@ -114,6 +114,7 @@ formula. `--self-update` stamps the release tag it installed.
 | `--self-update` | Replace the running script with the release pinned by `Formula/updatetools.rb`, verified against its sha256. Unreleased commits on `main` are never installed. |
 | `--schedule [interval]` | Install a per-user LaunchAgent (`com.dekrezz.updatetools`) that runs `updatetools --plain`. Default interval: 24h. Replaces an existing agent. Interval: bare seconds, `30m` / `12h` / `1d` / `1w`, or `HH:MM` for a daily wall-clock time. Does not run an update at install time. |
 | `--unschedule` | Boot out and delete that LaunchAgent. |
+| `--forget-password` | Delete the administrator password the dashboard was asked to remember (`~/.config/updatetools/saved-password`). |
 | `--no-notify` | Never show a desktop notification when a run ends. |
 | `--notify-on-error` | Notify only when at least one step failed (conflicts with `--no-notify`). |
 
@@ -314,7 +315,13 @@ on a narrower one below it.
 Light, dark or system appearance is a switch in the top-right corner. Passwords are asked for **in the page** — nothing is echoed as
 you type — and the answer goes straight to `sudo`. If the keyboard is not the
 language that password was accepted in (English until one succeeds), the reveal
-control closes and the sheet says which language is on instead. If a required
+control closes and the sheet says which language is on instead. Tick
+**Remember password** and the next runs do not ask: the password is sealed with
+a key in this Mac's Secure Enclave, which no other Mac, backup or copy of the
+file can open ([what it does and does not protect against](../SECURITY.md#what-updatetools-does-on-your-mac)).
+If the saved password stops working (it was changed), it is deleted and the
+sheet says so; unticking the box or `updatetools --forget-password` deletes it.
+`--plain` and scheduled runs never use it. If a required
 password is rejected (three tries, or the prompt is cancelled), no step starts
 and nothing is changed; the page offers **Try again**, which asks for it once
 more without restarting the tool. If the password is rejected when you press

@@ -22,6 +22,20 @@ dashboard shows the prompt to you; it is never answered automatically.
 privileged steps, and handed to `sudo` through a `0600` temporary file that is
 deleted as soon as it is read. It is never logged.
 
+**Remember password** is off unless you tick it on the password sheet. Then the
+password is kept for the next dashboard runs, which do not ask for it again. It
+is sealed with a P-256 key created in this Mac's Secure Enclave (CryptoKit),
+which the key never leaves: `~/.config/updatetools/saved-password` (`0600`)
+holds only the key's wrapped handle, a one-time public key and the AES-256-GCM
+ciphertext (its key from ECDH and HKDF-SHA256). No other Mac can open that file,
+whether it comes from a backup, a synced folder or a stolen disk, and the
+source holds no secret. The Swift helper
+that does this is in the script and is built on first use with `xcrun swiftc`,
+then kept in `~/.cache/updatetools/password-helper`. A saved password that
+`sudo` rejects (it was changed) or that cannot be opened on this Mac is deleted,
+and the sheet says so. Unticking the box, or `updatetools --forget-password`,
+deletes it. `--plain` and scheduled runs never use it.
+
 **The dashboard** listens on `127.0.0.1` only, behind a random per-run token
 exchanged for an `HttpOnly` cookie and a `Host` check. It stops when the tab
 closes.
@@ -44,6 +58,13 @@ standard Quit request and reopened from their own path; nothing is force-killed.
 script (`xcrun clang`). A LaunchAgent is installed only by `--schedule`.
 
 **What it does not protect against:**
+
+- **A program you run, once you saved the password.** Any program running as
+  you (malware, a script, an AI agent with shell access) can ask the Secure Enclave to open the saved password, the way
+  updatetools does. Only a confirmation each time, such as Touch ID, would stop
+  that, and it would take away what the box is for. If this matters to you,
+  leave the box unticked. Such a program can often catch a typed password too,
+  for instance by wrapping `sudo` in your shell profile.
 
 - **Compromised packages.** updatetools runs each package manager's own update
   command and trusts what that registry serves. A malicious npm, PyPI, crates or

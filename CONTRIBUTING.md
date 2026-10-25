@@ -32,6 +32,7 @@ a pull request without requesting permission.
    bash tests/test_safe_restart.sh
    bash tests/test_design.sh
    bash tests/test_password_prompt.sh
+   bash tests/test_saved_password.sh
    bash tests/test_stall_watch.sh
    bash tests/test_run_clock.sh
    bash tests/test_safe_stop.sh
