@@ -83,14 +83,15 @@ ut_run_steps() {
   SUDO_KEEPER=""
 }
 
-# The user, answering each new password prompt the page shows.
-rep="${TMPDIR:-/tmp}/updatetools-wrap-$$/rep"
+# The user, answering each new password prompt the page shows (into the
+# run's prompt directory, named after its PID).
 (
   seen=""
   while :; do
     ask="$(sed -n 's/.*"ask":\([0-9]*\).*/\1/p' "$tmp/web/state.json" 2>/dev/null)"
     if [ -n "$ask" ] && [ "$ask" != "$seen" ]; then
-      printf 'secret\n' > "$rep"
+      for rep in "${TMPDIR:-/tmp}"/updatetools-wrap-$$*/; do :; done
+      printf 'secret\n' > "${rep}rep"
       seen="$ask"
     fi
     sleep 0.05
