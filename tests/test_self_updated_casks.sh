@@ -96,6 +96,16 @@ run_casks
 assert_eq "self-updated app matches a cask version with a build suffix" "0" "$rc"
 assert_contains "suffixed self-updated app is not staged" "$out" "· 0 staged"
 
+# A cask can track the build number instead: Ghostty's tip builds are
+# "<build>,<commit>", with the commit as the marketing version.
+make_app "UT Self.app" "6ba1441"
+/usr/bin/plutil -insert CFBundleVersion -string "18466" "$HOME/Applications/UT Self.app/Contents/Info.plist"
+CASK_LATEST="18466,6ba144158577d033ccb6ed4b574e4013957c9161"
+OUTDATED_CASKS="ut-self"
+run_casks
+assert_eq "self-updated app matches a cask that tracks the build number" "0" "$rc"
+assert_contains "build-number self-updated app is not staged" "$out" "already on 18466"
+
 # ---------------------------------------------------------------------------
 # Running app whose bundle is really older: still staged
 # ---------------------------------------------------------------------------

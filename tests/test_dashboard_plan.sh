@@ -83,6 +83,14 @@ assert_eq "other running app is checked first" "check" "$(ut_cask_plan chat Chat
 assert_eq "running browser waits for quit" "wait|Browser: open tabs and forms" "$(ut_cask_plan google-chrome Chrome.app)"
 assert_eq "hosting terminal waits" "wait|This terminal is running the update" "$(ut_cask_plan terminal Term.app)"
 assert_eq "interactive-sudo cask is manual" "manual" "$(ut_cask_plan stats Rect.app | cut -d'|' -f1)"
+# Unset, the list holds the casks with a sudo prompt of their own, unless the
+# run answers that prompt itself (the dashboard, with the run's password).
+assert_eq "Stats is manual when nobody answers sudo" "manual" \
+  "$(unset BREW_CASK_SKIP; UT_SUDO_ANSWERED=0 ut_cask_plan stats Rect.app | cut -d'|' -f1)"
+assert_eq "Stats is upgraded when the run answers sudo" "restart" \
+  "$(unset BREW_CASK_SKIP; UT_SUDO_ANSWERED=1 ut_cask_plan stats Rect.app | cut -d'|' -f1)"
+assert_eq "BREW_CASK_SKIP still holds a cask back when the run answers sudo" "manual" \
+  "$(UT_SUDO_ANSWERED=1 ut_cask_plan stats Rect.app | cut -d'|' -f1)"
 assert_eq "UPDATETOOLS_CLOSE restarts" "restart|Listed in UPDATETOOLS_CLOSE" "$(UPDATETOOLS_CLOSE=chat ut_cask_plan chat Chat.app)"
 assert_eq "UPDATETOOLS_PROTECT waits" "wait|Listed in UPDATETOOLS_PROTECT" "$(UPDATETOOLS_PROTECT=rect ut_cask_plan rect Rect.app)"
 assert_eq "--no-close waits" "wait|Closing apps is turned off (--no-close)" "$(CLOSE_APPS=0 ut_cask_plan rect Rect.app)"

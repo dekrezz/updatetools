@@ -941,7 +941,8 @@ ut_changelog_lookup() {
 #
 # Toggles:  CLOSE_APPS=0 / --no-close   -> treat every `close` as `protect`.
 #           BREW_CASK_SKIP="a b"        -> casks needing interactive sudo (kept
-#                                          out of the automated run, reported).
+#                                          out of the automated run, reported;
+#                                          see ut_cask_skip_list).
 #           UPDATETOOLS_CLOSE / UPDATETOOLS_PROTECT — per-token overrides.
 # Record a cask/app that was staged (on-disk or deferred) so the version report
 # does not claim the running process already moved to the new version.
@@ -976,27 +977,51 @@ ut_cask_brew() { # $1 = token, $2 = greedy flag, rest = brew args
   return "$rc"
 }
 
+# Casks whose upgrade asks sudo for a password of its own (a privileged
+# launchctl helper: Stats, AlDente). A dashboard run answers that prompt itself
+# with the run's password, typed or saved, through its askpass helper
+# (UT_SUDO_ANSWERED=1), so nothing is held back there by default; a run with
+# nobody to answer leaves them for a manual upgrade. BREW_CASK_SKIP, set even
+# empty, wins in both.
+ut_cask_skip_list() {
+  if [ -n "${BREW_CASK_SKIP+set}" ]; then printf '%s\n' "$BREW_CASK_SKIP"
+  elif [ "${UT_SUDO_ANSWERED:-0}" = "1" ]; then printf '\n'
+  else printf '%s\n' "stats aldente"; fi
+}
+
+# ut_app_on_version PATH VERSION — the bundle at PATH is VERSION, by its
+# marketing version or its build number: a cask can track either (Ghostty's
+# tip builds are "<build>,<commit>", with the commit as the marketing version).
+ut_app_on_version() {
+  local v
+  [ -n "$2" ] || return 1
+  v="$(ut_plist_value "$1" CFBundleShortVersionString)"
+  [ "$v" = "$2" ] && return 0
+  v="$(ut_plist_value "$1" CFBundleVersion)"
+  [ "$v" = "$2" ]
+}
+
 # Auto-updating apps (Squirrel, Sparkle) often install their own update before
 # Homebrew does: brew still lists the cask as outdated from its stale Caskroom
 # record, while the app on disk (and the process running from it) is already on
 # the new version. Echo that version when the bundle matches the cask's latest.
 ut_cask_self_updated() { # $1 = cask token
-  local token="$1" latest app p ver
+  local token="$1" latest app p
   latest="$(brew info --cask --json=v2 "$token" 2>/dev/null | jq -r '.casks[0].version // empty')"
   latest="${latest%%,*}"   # drop build suffixes like "2.19675.0,5706e55…"
   [ -n "$latest" ] && [ "$latest" != "latest" ] || return 1
   app="$(cask_to_apps "$token" | head -n1)"
   [ -n "$app" ] || return 1
   p="$(app_path "$app")" || return 1
-  ver="$(ut_plist_value "$p" CFBundleShortVersionString)"
-  [ "$ver" = "$latest" ] || return 1
-  printf '%s\n' "$ver"
+  ut_app_on_version "$p" "$latest" || return 1
+  printf '%s\n' "$latest"
 }
 
 ut_upgrade_casks_smart() {
   have brew || { echo "Homebrew not found; skipping casks."; return 0; }
   local greedy_flag="${1:-}"
-  local skip_list="${BREW_CASK_SKIP-stats aldente}"
+  local skip_list
+  skip_list="$(ut_cask_skip_list)"
   local close_enabled="${CLOSE_APPS:-1}"
   local skip_re token verdict app bid cur apath r
   local n_up=0 n_close=0 n_protect=0 n_skip=0
@@ -6216,13 +6241,13 @@ UT_PASSWORD_SWIFT
 #        restart  quits, updates and reopens the running app (ut_restart_safe)
 #        check    running: restarted only if it reports no unsaved work
 #        wait     running and protected: installs now, applies when you quit it
-#        manual   kept out of the automated run (BREW_CASK_SKIP)
+#        manual   kept out of the automated run (ut_cask_skip_list)
 #        sync     the app already updated itself; only Homebrew's record moves
 
 # ut_cask_plan TOKEN APP -> "act|why" for one outdated cask.
 ut_cask_plan() {
   local token="$1" app="${2:-}" path bid
-  if in_list "$token" "${BREW_CASK_SKIP-stats aldente}"; then
+  if in_list "$token" "$(ut_cask_skip_list)"; then
     echo "manual|Needs an interactive password: brew upgrade --cask $token"; return
   fi
   [ -n "$app" ] || { echo "update|"; return; }
@@ -6262,7 +6287,7 @@ ut_cask_plan() {
 
 # ut_plan_homebrew DIR — casks first (fast), then formulae (can take a while).
 ut_plan_homebrew() {
-  local dir="$1" greedy="" line token old new tokens="" info name ver app cur act
+  local dir="$1" greedy="" line token old new tokens="" info name ver app act
   [ "${GREEDY:-1}" = "1" ] && greedy="--greedy"
   : > "$dir/homebrew.plan.tmp"
   # shellcheck disable=SC2086
@@ -6292,9 +6317,8 @@ ut_plan_homebrew() {
       act=""
       local p=""
       [ -n "$app" ] && p="$(app_path "$app" 2>/dev/null)"
-      if [ -n "$p" ] && [ -n "$ver" ] && [ "$ver" != "latest" ]; then
-        cur="$(ut_plist_value "$p" CFBundleShortVersionString)" \
-          && [ "$cur" = "$ver" ] && act="sync|Already updated itself"
+      if [ -n "$p" ] && [ "$ver" != "latest" ] && ut_app_on_version "$p" "$ver"; then
+        act="sync|Already updated itself"
       fi
       [ -n "$act" ] || act="$(ut_cask_plan "$token" "$app")"
       # name|old|new|act|why|token|app — the token and app for the page's
@@ -7577,8 +7601,8 @@ ut_brew_cli_unlock() {
 
 # Cask upgrades go through ut_upgrade_casks_smart() above,
 # which classifies each running app (close vs protect) instead of blanket
-# --no-quit staging. The interactive-sudo skip list (BREW_CASK_SKIP, default
-# "stats aldente") is still honoured there.
+# --no-quit staging. The interactive-sudo skip list (ut_cask_skip_list) is
+# still honoured there.
 
 # Locally-developed VS Code extensions (your own publisher) aren't on the
 # Marketplace, so `code --install-extension` can't fetch them and errors every
@@ -8877,6 +8901,9 @@ rm -f "$PROMPT_REP"
 ASKPASS_EOF
 chmod +x "${WRAP_DIR}/askpass"
 export SUDO_ASKPASS="${WRAP_DIR}/askpass"
+# ut_web_ask answers every sudo prompt of the privileged phase with the run's
+# password, so casks with a sudo prompt of their own are upgraded too.
+UT_SUDO_ANSWERED=1
 export SSH_ASKPASS="${WRAP_DIR}/askpass"
 export SSH_ASKPASS_REQUIRE="force"
 export GIT_ASKPASS="${WRAP_DIR}/askpass"
