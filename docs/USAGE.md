@@ -175,7 +175,7 @@ The report step stays last.
 | `UPDATETOOLS_CLOSE="a b"` | Force-close these cask apps to upgrade them now (space/comma list of tokens). |
 | `UPDATETOOLS_PROTECT="a b"` | Never close these apps (cask tokens or bundle ids). |
 | `UPDATETOOLS_SAFE_RESTART="a b"` | Extra known-safe utilities (cask tokens or bundle ids) that may be restarted even with a regular window. Never overrides the terminal, risky-category or hosted-work checks. |
-| `BREW_CASK_SKIP="a b"` | Casks needing an interactive sudo password — kept out of the run and reported for manual upgrade (default `stats aldente`). |
+| `BREW_CASK_SKIP="a b"` | Casks needing an interactive sudo password — kept out of the run and reported for manual upgrade. Unset, a dashboard run skips none: it answers their sudo prompt with the run's password, typed or saved. A plain run skips `stats aldente`. Set it, even empty, to choose for both. |
 
 ## Apps installed from DMGs
 
@@ -211,7 +211,7 @@ acts per verdict:
 | **upgrade** | app installed but **not running** | upgrade in place — nobody's using it |
 | **close** | app running **and safe to restart** (see below) | graceful quit → upgrade → relaunch in the background |
 | **protect** | app running but unsafe to close | stage with `--no-quit`; applies on next launch |
-| **skip (manual)** | needs an interactive sudo password (`BREW_CASK_SKIP`) | reported, not touched |
+| **skip (manual)** | needs an interactive sudo password nobody in the run can give (`BREW_CASK_SKIP`) | reported, not touched |
 | **broken** | app missing from `/Applications` and an interrupted upgrade left its backup in the Caskroom (every `brew upgrade` fails) | `brew reinstall --cask` |
 
 An app is **protected** (never closed) when it is any of:
