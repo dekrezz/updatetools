@@ -7407,7 +7407,7 @@ ut_web_stop() {
 # step touches them. The npm step runs at the same time as Codex CLI and Claude
 # Code, and two `npm install -g` of one package collide in its directory
 # (ENOTEMPTY); a step that is switched off also leaves its tool alone.
-UT_NPM_OWNED="@openai/codex @anthropic-ai/claude-code supabase vercel"
+UT_NPM_OWNED="@openai/codex @anthropic-ai/claude-code supabase vercel pnpm"
 
 npm_update_global() {
   # npm itself lives in /opt/homebrew and is brew-managed; npm update -g includes it
@@ -7487,6 +7487,10 @@ pnpm_update_global() {
     else
       rc=1
     fi
+  elif have npm && npm ls -g --depth=0 pnpm >/dev/null 2>&1; then
+    # pnpm installed via `npm -g`: only this step updates it (the npm step skips
+    # it), so the binary is never replaced while another step runs it.
+    npm install -g pnpm@latest || rc=$?
   else
     # Prefer pnpm's own updater; fall back to the Homebrew formula when present.
     # A failed self-update with no brew formula is a real failure — do not drop it.

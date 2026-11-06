@@ -39,6 +39,7 @@ outdated @openai/codex 0.163.0 0.164.0
 outdated @anthropic-ai/claude-code 2.1.300 2.1.304
 outdated supabase 2.40.0 2.41.0
 outdated vercel 48.1.0 48.2.0
+outdated pnpm 12.16.1 12.18.0
 outdated npm 10.9.9 12.2.0
 outdated corepack 0.36.0 0.36.1
 outdated typescript 5.9.2 5.9.3
@@ -50,7 +51,7 @@ for p in corepack typescript; do
   [[ " $installs " == *" $p "* ]] && pass "an outdated package no step owns is installed: $p" \
     || fail "an outdated package no step owns is installed: $p (npm calls: $installs)"
 done
-for p in @openai/codex @anthropic-ai/claude-code supabase vercel npm; do
+for p in @openai/codex @anthropic-ai/claude-code supabase vercel pnpm npm; do
   [[ " $installs " == *" $p "* ]] && fail "the npm step leaves $p to its own step (npm calls: $installs)" \
     || pass "the npm step leaves $p to its own step"
 done
