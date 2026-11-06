@@ -7517,6 +7517,23 @@ pnpm_update_global() {
   return "$rc"
 }
 
+# `claude update` has stalled for minutes on "Updating to ..." while a rerun
+# finished at once (2026-11-06). Give each try its own deadline and try twice,
+# instead of waiting for the shared stall watchdog (STALL_TIMEOUT) to kill it.
+CLAUDE_UPDATE_TIMEOUT="${CLAUDE_UPDATE_TIMEOUT:-120}"
+claude_update_retry() {
+  local n rc=1 pid wd
+  for n in 1 2; do
+    claude update & pid=$!
+    ( sleep "$CLAUDE_UPDATE_TIMEOUT"; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 & wd=$!
+    wait "$pid"; rc=$?
+    kill "$wd" 2>/dev/null; wait "$wd" 2>/dev/null
+    [ "$rc" -eq 0 ] && return 0
+    echo "claude update did not finish (try $n of 2, exit $rc)"
+  done
+  return "$rc"
+}
+
 uv_update_self_and_tools() {
   local rc=0 self_rc=0
   # Keep stderr in the step log when this failure is what sets rc.
@@ -7768,7 +7785,7 @@ STEPS=(
   "cargo · update binaries¦have cargo¦{ have cargo-install-update||cargo install cargo-update; }; cargo install-update -a"
   "Supabase CLI¦have supabase¦if have brew && brew list supabase >/dev/null 2>&1; then ut_brew_upgrade_formula supabase; elif have npm; then npm install -g supabase@latest; fi"
   "Vercel CLI¦have vercel¦if have brew && brew list vercel-cli >/dev/null 2>&1; then ut_brew_upgrade_formula vercel-cli; elif have npm && npm list -g vercel >/dev/null 2>&1; then npm install -g vercel@latest; else echo 'vercel present but no known update source matched'; fi"
-  "Claude Code · self-update¦have claude¦claude update"
+  "Claude Code · self-update¦have claude¦claude_update_retry"
   "Codex CLI · update¦have codex¦codex_update_npm_only"
   "Antigravity · agy update¦have agy¦agy update"
   "gh · extensions¦have gh¦gh extension upgrade --all"
