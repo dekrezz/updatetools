@@ -8165,6 +8165,29 @@ ut_run_step_serial() {
   [ -n "${WEB_DIR:-}" ] && ut_web_state run
 }
 
+# Steps that start together with Homebrew instead of after it: they touch only
+# their own tool tree and need neither brew nor sudo, so they cost no wall-clock
+# time there. Claude Code's self-update installs into ~/.local/share/claude; it
+# stalled for minutes on 2026-11-06 while Homebrew was long finished. uv (its
+# fallback is `brew upgrade uv`) and the VS Code extensions (Homebrew may be
+# replacing the app) stay in the wave.
+UT_EARLY_KEYS="claude"
+
+ut_step_early() {
+  case " $UT_EARLY_KEYS " in *" ${1:-} "*) return 0 ;; esac
+  return 1
+}
+
+# Start the early steps now; ut_run_wave takes them over and waits for them.
+ut_start_early() {
+  local i
+  for ((i=0;i<TOTAL;i++)); do
+    ut_step_early "${STEP_KEY[i]}" || continue
+    ut_step_should_run "$i" || continue
+    ut_spawn_step "$i"
+  done
+}
+
 # After Homebrew: run every waveable enabled step concurrently, then wait.
 ut_run_wave() {
   local i pid steplog any size last_size last_change stalled rc
@@ -8174,7 +8197,9 @@ ut_run_wave() {
 
   for ((i=0;i<TOTAL;i++)); do
     ut_step_waveable "${STEP_KEY[i]}" || continue
-    if ut_step_should_run "$i"; then
+    if [ -n "${STEP_PID[i]:-}" ] && ut_step_early "${STEP_KEY[i]}"; then
+      wave_idx+=("$i")          # started with Homebrew; only wait for it here
+    elif ut_step_should_run "$i"; then
       wave_idx+=("$i")
     else
       [ -n "${WEB_DIR:-}" ] && ut_web_state run
@@ -8184,9 +8209,13 @@ ut_run_wave() {
 
   CUR_PIDS=""
   for i in "${wave_idx[@]}"; do
-    [ -n "${PROMPT_REQ:-}" ] && rm -f "$PROMPT_REQ" "$PROMPT_REP"
-    sudo -n -v 2>/dev/null || true
-    ut_spawn_step "$i"
+    if [ -n "${STEP_PID[i]:-}" ]; then
+      CUR_PIDS="${CUR_PIDS:+$CUR_PIDS }${STEP_PID[i]}"
+    else
+      [ -n "${PROMPT_REQ:-}" ] && rm -f "$PROMPT_REQ" "$PROMPT_REP"
+      sudo -n -v 2>/dev/null || true
+      ut_spawn_step "$i"
+    fi
     steplog="${UT_STEP_LOG_DIR}/$i.log"
     w_last_size[i]=$(ut_step_progress "$steplog")
     w_last_change[i]=$SECONDS
@@ -8283,6 +8312,8 @@ ut_run_steps() {
   mkdir -p "$UT_STEP_LOG_DIR"
   STEP_PID=(); STEP_RC=(); STEP_FORCED=()
   CUR_PIDS=""
+
+  ut_start_early
 
   # Homebrew first and alone (never concurrent with the CLI wave).
   for ((i=0;i<TOTAL;i++)); do
