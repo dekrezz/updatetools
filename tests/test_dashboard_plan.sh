@@ -244,25 +244,20 @@ assert_contains "state carries the round" "$(cat "$WEB_DIR/state.json")" '"round
 
 
 # ---------------------------------------------------------------------------
-# the read-only preflight never overlaps the steps: it is waited for (bounded)
-# and stopped before any step starts
+# the read-only preflight never overlaps the steps: it is stopped at once,
+# without a wait, before any step starts
 # ---------------------------------------------------------------------------
 UT_PLAN_DIR="$tmp/plan2"; mkdir -p "$UT_PLAN_DIR"; UT_PLAN_FINAL=""; UT_PLAN_SIG=""
-( sleep 0.3; : > "$UT_PLAN_DIR/homebrew.done" ) &
-UT_PLAN_PID=$!
-UPDATETOOLS_PREFLIGHT_WAIT=10 ut_preflight_settle
-assert_eq "a quick preflight is waited for" "1" "$([ -f "$UT_PLAN_DIR/homebrew.done" ] && echo 1)"
-assert_eq "settled preflight leaves no pid behind" "" "$UT_PLAN_PID"
-assert_eq "settled plan is frozen" "1" "$UT_PLAN_FINAL"
-UT_PLAN_FINAL=""
 ( exec sleep 30 ) &
 slow=$!
 UT_PLAN_PID=$slow
 t_start=$SECONDS
-UPDATETOOLS_PREFLIGHT_WAIT=1 ut_preflight_settle
+ut_preflight_settle
 sleep 0.2
 if kill -0 "$slow" 2>/dev/null; then fail "a slow preflight is stopped before the steps"; kill "$slow"; else pass "a slow preflight is stopped before the steps"; fi
-[ $((SECONDS - t_start)) -le 3 ] && pass "the wait for a slow preflight is bounded" || fail "the wait for a slow preflight is bounded"
+[ $((SECONDS - t_start)) -le 1 ] && pass "a slow preflight is not waited for" || fail "a slow preflight is not waited for"
+assert_eq "settled preflight leaves no pid behind" "" "$UT_PLAN_PID"
+assert_eq "settled plan is frozen" "1" "$UT_PLAN_FINAL"
 body="$(declare -f run_web)"
 before="${body%%ut_run_steps*}"
 assert_contains "run_web settles the preflight before the steps" "$before" "ut_preflight_settle"

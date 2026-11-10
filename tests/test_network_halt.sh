@@ -58,7 +58,7 @@ wait_for_file() { local n=0; while [ ! -f "$1" ] && [ "$n" -lt 100 ]; do sleep 0
 setup_run() { # <name> <homebrew seconds> <npm seconds>
   local d="$tmp/$1"
   mkdir -p "$d/web"
-  WEB_DIR="$d/web"; LOG="$d/run.log"; : > "$LOG"; DIAG_DIR="$d/diag"; T0=$SECONDS
+  WEB_DIR="$d/web"; LOG="$d/run.log"; : > "$LOG"; DIAG_DIR="$d/diag"; DEBUG=1; T0=$SECONDS
   STEPS=(
     "Homebrew · upgrade¦true¦\"$tmp/tool\" \"$d/brew\" $2"
     "npm · update globals¦true¦\"$tmp/tool\" \"$d/npm\" $3"
@@ -158,6 +158,24 @@ failures=$((failures + $?))
     || fail "a plain run stops the same safe way"
   grep -q "$DIAG_DIR" "$RUN/out" && pass "a plain run prints where the diagnostics are" \
     || fail "a plain run prints where the diagnostics are"
+  exit "$failures"
+)
+failures=$((failures + $?))
+
+# Without --debug a stopped run keeps no log and no report.
+(
+  failures=0
+  setup_run nodebug "" 1
+  DEBUG=0
+  WEB_DIR=""
+  NET_TIMEOUT=2
+  echo up > "$tmp/net"
+  ( wait_for_file "$RUN/brew.started" && echo "down no default route (test)" > "$tmp/net" ) &
+  run_plain > "$RUN/out" 2>&1
+  [ ! -e "$DIAG_DIR" ] && pass "without --debug a stopped run saves no diagnostics" \
+    || fail "without --debug a stopped run saves no diagnostics"
+  grep -q "Diagnostics:" "$RUN/out" && fail "without --debug the terminal names no diagnostics" \
+    || pass "without --debug the terminal names no diagnostics"
   exit "$failures"
 )
 failures=$((failures + $?))

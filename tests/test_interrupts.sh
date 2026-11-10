@@ -55,7 +55,7 @@ STATUS=(pending pending pending); STEP_WHY=("" "" "")
 sudo() { return 0; }
 osascript() { printf '%s\n' "$*" >> "$RUN/notified"; }
 ut_net_probe() { echo up; }
-STALL_TIMEOUT=0; STOP_GRACE=10; DIAG_DIR="$RUN/diag"
+STALL_TIMEOUT=0; STOP_GRACE=10; DIAG_DIR="$RUN/diag"; DEBUG=1
 mkdir -p "$RUN/web"; WEB_DIR="$RUN/web"
 ut_run_steps
 echo finished > "$RUN/finished"
@@ -178,7 +178,7 @@ echo "$dead" > "$LOCK_BASE/pid"
 echo "Homebrew · upgrade" > "$LOCK_BASE/steps"
 dead_log="${TMPDIR:-/tmp}/updatetools-$dead.log"
 printf '######## Homebrew ########\nleftover output\n' > "$dead_log"
-DIAG_DIR="$tmp/diag-killed"
+DIAG_DIR="$tmp/diag-killed"; DEBUG=1
 ut_acquire_lock 2> "$tmp/lock.err"; rc=$?
 [ "$rc" = "0" ] && [ "$(cat "$LOCK_BASE/pid" 2>/dev/null)" = "$$" ] && pass "the stale lock is taken over" || fail "the stale lock is taken over (rc $rc)"
 grep -q "did not finish" "$tmp/lock.err" && grep -q "Homebrew" "$tmp/lock.err" \

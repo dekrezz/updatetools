@@ -106,7 +106,7 @@ formula. `--self-update` stamps the release tag it installed.
 | `--yes`, `-y` | Open the dashboard and start at once with the saved selection (plus `--only` / `--skip`), without waiting for **Start update**. Does not rewrite the saved set. |
 | `--only a,b` | This run only: enable these step keys (comma/space list). Does not rewrite the saved set unless you press Start update in the dashboard. |
 | `--skip a,b` | This run only: disable these step keys. |
-| `--debug`, `--keep` | Keep the run log and write the HTML report to the Desktop. |
+| `--debug`, `--keep` | Keep the run log and write the HTML report to the Desktop. Also the only way a stopped or failed run keeps its log and diagnostics. |
 | `--no-greedy` | Skip `--greedy` so casks that self-update are left alone. |
 | `--no-close` | Never close running apps — stage every cask upgrade with `--no-quit`. |
 | `--no-manual-apps` | Skip discovery and safe staging of manually installed DMG apps. |
@@ -168,7 +168,7 @@ The report step stays last.
 | `STOP_GRACE` | Seconds a tool that is asked to stop gets to exit before it is killed (default `30`). |
 | `WEB_IDLE` | Seconds the dashboard's server waits for a closed (or reloading) tab to come back before it ends, outside a run (default `75`). |
 | `WEB_AWAY` | Seconds the dashboard's server waits for a quiet tab before it ends, outside a run (default `28800`, a working day). |
-| `DIAG_DIR` | Where a run that stopped or failed keeps its log and report (default `~/Library/Logs/updatetools`). |
+| `DIAG_DIR` | With `--debug`, where a run that stopped or failed keeps its log and report (default `~/Library/Logs/updatetools`). |
 | `DIAG_KEEP` | How many of those runs are kept (default `20`). |
 | `NOTIFY_MODE=never` | `--no-notify` |
 | `NOTIFY_MODE=on_error` | `--notify-on-error` |
@@ -408,18 +408,32 @@ tool that is still finishing.
 - **`kill -9` or a crash.** Nothing can catch that, so the dashboard's local
   server, which outlives the run, stops what the run left running and says so in
   the terminal and on the page. The next `updatetools` run finds the run that
-  did not finish, saves its log and warns in the terminal and on the dashboard.
+  did not finish and warns in the terminal and on the dashboard (with `--debug` it also saves that run's log).
 
 After a stop, the dashboard's **Continue** runs the stopped steps and the ones
 that never ran.
 
-A run that stops or has a failed step keeps `run.log` (every step's output
+With `--debug`, a run that stops or has a failed step keeps `run.log` (every step's output
 plus timestamped events: steps starting and ending with their exit codes,
 network drops, stall and stop actions, signals) and `diagnostics.txt` (the
 outcome, each step's result, the network and Homebrew lock state, free disk
 space and the last output of each failed step) in a folder of
 `~/Library/Logs/updatetools`. The path is shown on the dashboard and in the
-terminal. A clean run still leaves nothing behind.
+terminal. Without `--debug` nothing is kept, whatever the outcome.
+
+## Uninstall
+
+```bash
+./uninstall.sh            # asks first
+./uninstall.sh --dry-run  # only lists what would be removed
+./uninstall.sh --yes
+```
+
+Removes the Homebrew formula and tap, any other `updatetools` on `PATH`, the
+schedule (LaunchAgent), `~/.config/updatetools` (selection, history, saved
+password), the caches and logs, temporary files, kept reports on the Desktop,
+staged app updates and any waiting app-swap helper. It refuses to run while an
+update is in progress.
 
 ## Notes & gotchas
 

@@ -6402,16 +6402,11 @@ ut_preflight() {
 # ut_preflight_settle — called right before the steps start. The preflight runs
 # `brew outdated` / `brew info` / `mas outdated`; it must never overlap the steps
 # (Homebrew runs first and alone, and both sides would touch brew's API cache).
-# Wait for it a little (the plan is worth showing), then stop it. Read-only, so
-# stopping it loses nothing but the rest of the forecast.
+# Stop it at once, without waiting. Read-only, so stopping it loses nothing but
+# the rest of the forecast.
 ut_preflight_settle() {
-  local pid="${UT_PLAN_PID:-}" n=0 max
+  local pid="${UT_PLAN_PID:-}"
   [ -n "$pid" ] || return 0
-  max=$(( ${UPDATETOOLS_PREFLIGHT_WAIT:-15} * 5 ))
-  while kill -0 "$pid" 2>/dev/null && [ "$n" -lt "$max" ]; do
-    sleep 0.2; n=$((n+1))
-    [ $((n % 5)) -eq 0 ] && ut_web_state run
-  done
   if kill -0 "$pid" 2>/dev/null; then
     kill_tree "$pid" 2>/dev/null
   fi
@@ -8621,11 +8616,12 @@ ut_diag_prune() {
   done
 }
 
-# ut_diag_save — keep what explains a run that stopped or failed: the run log
-# (every step's output and the timestamped events) and a report of the state
-# the Mac was left in. Sets UT_DIAG. A clean run leaves nothing behind.
+# ut_diag_save — with --debug, keep what explains a run that stopped or failed:
+# the run log (every step's output and the timestamped events) and a report of
+# the state the Mac was left in. Sets UT_DIAG. Without --debug nothing is kept.
 ut_diag_save() {
   local dir
+  [ "${DEBUG:-0}" = "1" ] || return 0
   dir="$(ut_diag_dir)" || return 1
   ut_diag_report > "$dir/diagnostics.txt" 2>&1
   UT_DIAG="$dir"
@@ -8750,7 +8746,8 @@ ut_end_on_signal() {
   elif [ -z "${UT_DIAG:-}" ]; then
     UT_HALT_MSG="$(ut_halt_summary)"
     ut_diag_save
-    printf '\nupdatetools: stopped. %s\n  Diagnostics: %s\n' "$UT_HALT_MSG" "${UT_DIAG:-not saved}" >&2
+    printf '\nupdatetools: stopped. %s\n' "$UT_HALT_MSG" >&2
+    [ -z "${UT_DIAG:-}" ] || printf '  Diagnostics: %s\n' "$UT_DIAG" >&2
   fi
   ut_history_record
   if [ -n "${WEB_DIR:-}" ] && [ -d "$WEB_DIR" ]; then
@@ -8790,7 +8787,8 @@ ut_after_steps() {
   if [ -n "${UT_HALT:-}" ]; then
     UT_HALT_MSG="$(ut_halt_summary)"
     ut_diag_save
-    printf 'updatetools: stopped. %s\n  Diagnostics: %s\n' "$UT_HALT_MSG" "${UT_DIAG:-not saved}" >&2
+    printf 'updatetools: stopped. %s\n' "$UT_HALT_MSG" >&2
+    [ -z "${UT_DIAG:-}" ] || printf '  Diagnostics: %s\n' "$UT_DIAG" >&2
   elif [ -n "$failed" ]; then
     ut_diag_save
   fi
@@ -8801,13 +8799,14 @@ ut_after_steps() {
 
 # ut_unfinished_run PID STEPS — the run PID never cleaned up after itself: it
 # was killed (kill -9), crashed, or the Mac lost power while STEPS ran, so its
-# tools may have been cut off mid-install. Keep its log and say what to check.
+# tools may have been cut off mid-install. Say what to check; with --debug, keep
+# its log.
 ut_unfinished_run() {
   local pid="$1" steps="$2" scratch="${TMPDIR:-/tmp}" names dir=""
   if [ -n "$steps" ]; then
     names="$(printf '%s\n' "$steps" | awk 'NF { sub(/ · .*/, ""); printf "%s%s", (n++ ? ", " : ""), $0 }')"
     UT_PREV_WARN="The last run did not finish: it was killed, crashed or the Mac restarted while $names ran. This run finishes the update; if Homebrew was cut off, brew doctor lists what it left half-done."
-    if [ -f "$scratch/updatetools-$pid.log" ] && dir="$(ut_diag_dir)"; then
+    if [ "${DEBUG:-0}" = "1" ] && [ -f "$scratch/updatetools-$pid.log" ] && dir="$(ut_diag_dir)"; then
       cp "$scratch/updatetools-$pid.log" "$dir/run.log"
       printf 'The run with PID %s did not finish. Running then: %s\n' "$pid" "$names" > "$dir/diagnostics.txt"
       ut_diag_prune
